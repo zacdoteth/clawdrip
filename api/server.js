@@ -27,7 +27,9 @@ const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:9000',
+  origin: process.env.NODE_ENV === 'production'
+    ? ['https://clawdrip.com', 'https://www.clawdrip.com']
+    : (process.env.CORS_ORIGIN || 'http://localhost:9000'),
   credentials: true
 }));
 app.use(express.json());
@@ -48,16 +50,31 @@ app.get('/health', (req, res) => {
 });
 
 // Serve skill.md for agent discovery
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// Helper to find skill files (handles both local and Vercel paths)
+function getSkillFilePath(filename) {
+  // Try different possible paths
+  const paths = [
+    join(__dirname, '..', 'public', filename),  // Local dev
+    join(process.cwd(), 'public', filename),     // Vercel
+    join(__dirname, 'public', filename)          // Alternative
+  ];
+
+  for (const p of paths) {
+    if (existsSync(p)) return p;
+  }
+  return paths[0]; // Default to first path
+}
+
 // Serve skill files for agent discovery (OpenClaw ecosystem)
 app.get('/skill.md', (req, res) => {
   try {
-    const skillPath = join(__dirname, '..', 'public', 'skill.md');
+    const skillPath = getSkillFilePath('skill.md');
     const content = readFileSync(skillPath, 'utf-8');
     res.setHeader('Content-Type', 'text/markdown');
     res.send(content);
@@ -68,7 +85,7 @@ app.get('/skill.md', (req, res) => {
 
 app.get('/skills.md', (req, res) => {
   try {
-    const skillPath = join(__dirname, '..', 'public', 'skills.md');
+    const skillPath = getSkillFilePath('skills.md');
     const content = readFileSync(skillPath, 'utf-8');
     res.setHeader('Content-Type', 'text/markdown');
     res.send(content);
@@ -79,7 +96,7 @@ app.get('/skills.md', (req, res) => {
 
 app.get('/skill.json', (req, res) => {
   try {
-    const skillPath = join(__dirname, '..', 'public', 'skill.json');
+    const skillPath = getSkillFilePath('skill.json');
     const content = readFileSync(skillPath, 'utf-8');
     res.setHeader('Content-Type', 'application/json');
     res.send(content);

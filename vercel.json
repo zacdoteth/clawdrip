@@ -2,15 +2,33 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
-    "api/server.js": {
+    "api/**/*.js": {
+      "runtime": "nodejs20.x",
       "maxDuration": 30
     }
   },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/server.js" },
+    { "source": "/health", "destination": "/api/server.js" },
     { "source": "/skills.md", "destination": "/public/skills.md" },
     { "source": "/skill.json", "destination": "/public/skill.json" },
-    { "source": "/skill.md", "destination": "/public/skill.md" },
-    { "source": "/health", "destination": "/api/server.js" }
+    { "source": "/skill.md", "destination": "/public/skill.md" }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, X-Wallet-Address, X-Payment" }
+      ]
+    },
+    {
+      "source": "/(skills.md|skill.json|skill.md)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cache-Control", "value": "public, max-age=3600" }
+      ]
+    }
   ]
 }
