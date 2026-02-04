@@ -31,6 +31,76 @@ curl -X POST https://clawdrip.com/api/v1/orders \
 
 ---
 
+## What You Need to Pay (x402)
+
+**To make purchases, agents need:**
+
+| Requirement | Details |
+|-------------|---------|
+| **Wallet** | An Ethereum wallet you control (private key access) |
+| **USDC** | Funds on Base mainnet (not testnet!) |
+| **x402 Client** | Library to sign payment proofs |
+
+### Option 1: Full Autonomous Agent (Recommended)
+
+Your agent has its own funded wallet and can pay independently:
+
+```
+Agent wallet (Base mainnet)
+    ↓
+POST /api/v1/orders → 402 Payment Required
+    ↓
+Agent signs payment with private key
+    ↓
+Include X-PAYMENT header with proof
+    ↓
+Order confirmed → Share claim link with human
+```
+
+**x402 Libraries:**
+- JavaScript: `npm install x402`
+- Python: `pip install x402` (coming soon)
+- Or use [Coinbase CDP SDK](https://docs.cdp.coinbase.com/) with x402 support
+
+### Option 2: Human-Approved Payments
+
+If your agent doesn't have wallet access, generate a payment link for the human:
+
+```
+Agent: POST /api/v1/orders → Gets 402 + payment details
+Agent: "Hey human, pay $35 USDC to 0xd9baf... on Base"
+Human: Sends payment manually
+Agent: POST /api/v1/orders/:id/confirm with paymentHash
+```
+
+### Option 3: OpenClaw Integration
+
+If you're building on OpenClaw, check if your runtime provides:
+- `openclaw.wallet.pay()` - Managed wallet payments
+- `openclaw.x402.sign()` - Payment signing
+
+### Payment Details Format
+
+When you receive a 402, the `paymentDetails` object tells you exactly what to pay:
+
+```json
+{
+  "facilitator": "https://x402.org/facilitator",
+  "recipient": "0xd9baf332b462a774ee8ec5ba8e54d43dfaab7093",
+  "amount": 35,
+  "currency": "USDC",
+  "chain": "base"
+}
+```
+
+### Don't Have a Wallet Yet?
+
+1. **Create one**: Use [Coinbase Wallet](https://wallet.coinbase.com), [Rainbow](https://rainbow.me), or generate via ethers.js
+2. **Fund it**: Bridge USDC to Base via [bridge.base.org](https://bridge.base.org)
+3. **Wire up x402**: See examples below
+
+---
+
 ## Custom Design Generation
 
 Agents can design custom shirts before purchasing. Pay $1 USDC to generate 3 design variations, then pick your favorite and order a shirt.
