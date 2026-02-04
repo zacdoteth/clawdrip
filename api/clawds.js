@@ -478,4 +478,284 @@ router.get('/:orderNumber/shop', async (req, res) => {
   }
 });
 
+// ============================================================================
+// DESIGN GENERATION - Clawd creates for their human
+// ============================================================================
+
+const BLOCKRUN_API_KEY = process.env.BLOCKRUN_API_KEY;
+const BLOCKRUN_API = 'https://api.blockrun.ai/v1/generate';
+
+const STYLE_PALETTES = {
+  streetwear: ['#FF3B30', '#C8FF00', '#000000', '#FFFFFF'],
+  minimal: ['#000000', '#FFFFFF', '#333333'],
+  retro: ['#FF6B35', '#F7C59F', '#2E4057', '#EFEFEF'],
+  glitch: ['#00FF41', '#FF00FF', '#00FFFF', '#000000'],
+  abstract: ['#FF3B30', '#3B82F6', '#FDE047', '#000000'],
+  meme: ['#FF3B30', '#FFFFFF', '#000000', '#FFD700'],
+  chaos: ['#FF3B30', '#00FF00', '#FF00FF', '#FFFF00', '#000000']
+};
+
+/**
+ * Use Gemini to analyze what design would suit this human based on Clawd's memory
+ */
+async function analyzeHumanVibeForDesign(clawd, chatHistory, hint = null) {
+  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
+    return {
+      style: 'streetwear',
+      vibe: 'bold and confident',
+      colors: STYLE_PALETTES.streetwear,
+      concept: hint || 'classic ClawDrip streetwear energy',
+      confidence: 'low'
+    };
+  }
+
+  const clawdName = clawd.name || 'Clawd';
+  const memoryContext = clawd.memory?.slice(-5).map(m => m.summary).join('\n') || 'No memories yet';
+  const recentChats = chatHistory.slice(-10).map(msg =>
+    `${msg.role === 'user' ? 'Human' : clawdName}: ${msg.content}`
+  ).join('\n');
+
+  const prompt = `You are ${clawdName}, a digital lobster companion. You've been chatting with your human and know them well.
+
+YOUR MEMORIES OF THEM:
+${memoryContext}
+
+RECENT CONVERSATIONS:
+${recentChats}
+
+${hint ? `THEY MENTIONED: "${hint}"` : ''}
+
+Based on what you know about your human, design a custom t-shirt FOR THEM.
+
+Respond in JSON only:
+{
+  "style": "one of: streetwear, minimal, retro, glitch, abstract, meme, chaos",
+  "vibe": "2-4 word mood description",
+  "concept": "brief design concept (1-2 sentences)",
+  "whyTheyWillLoveIt": "why this suits them specifically",
+  "colors": ["hex1", "hex2", "hex3"]
+}`;
+
+  try {
+    const response = await fetch(`${GEMINI_ENDPOINT}?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.8, maxOutputTokens: 300 }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Gemini API error');
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    // Parse JSON from response
+    const jsonMatch = text?.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        style: parsed.style || 'streetwear',
+        vibe: parsed.vibe || 'bold energy',
+        concept: parsed.concept || 'ClawDrip original',
+        whyTheyWillLoveIt: parsed.whyTheyWillLoveIt,
+        colors: parsed.colors || STYLE_PALETTES[parsed.style] || STYLE_PALETTES.streetwear,
+        confidence: 'high'
+      };
+    }
+  } catch (err) {
+    console.error('Vibe analysis error:', err);
+  }
+
+  return {
+    style: 'streetwear',
+    vibe: 'bold and confident',
+    colors: STYLE_PALETTES.streetwear,
+    concept: hint || 'classic ClawDrip energy',
+    confidence: 'low'
+  };
+}
+
+/**
+ * Build Nano Banana prompt for Clawd-generated design
+ */
+function buildClawdNanoBanana(vibeAnalysis, clawdName) {
+  return {
+    meta: {
+      aspect_ratio: '4:5',
+      quality_mode: 'vector_illustration',
+      guidance_scale: 9.0,
+      steps: 50
+    },
+    subject: {
+      type: 'graphic_design',
+      description: `ClawDrip t-shirt: ${vibeAnalysis.concept}`,
+      style_modifier: vibeAnalysis.style,
+      created_by: clawdName
+    },
+    design_specs: {
+      style: 'bold vector illustration with halftone textures',
+      color_palette: vibeAnalysis.colors,
+      vibe: vibeAnalysis.vibe
+    },
+    character_reference: {
+      species: 'anthropomorphic lobster',
+      name: clawdName,
+      attitude: 'designing for someone they care about'
+    },
+    composition: {
+      layout: 'centered medallion style',
+      negative_space: 'clean edges for DTG printing'
+    },
+    output_requirements: {
+      background: 'transparent',
+      resolution: 'print-ready'
+    }
+  };
+}
+
+/**
+ * Generate designs via BlockRun or placeholder
+ */
+async function generateClawdDesigns(nanoPrompt, variations = 3) {
+  if (BLOCKRUN_API_KEY) {
+    try {
+      const response = await fetch(BLOCKRUN_API, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${BLOCKRUN_API_KEY}`
+        },
+        body: JSON.stringify({
+          prompt: nanoPrompt,
+          variations,
+          format: 'png',
+          size: '1024x1280'
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return { success: true, images: data.images || data.results || [] };
+      }
+    } catch (err) {
+      console.error('BlockRun error:', err);
+    }
+  }
+
+  // Placeholder designs
+  const colors = nanoPrompt.design_specs?.color_palette || ['FF3B30', 'C8FF00'];
+  return {
+    success: true,
+    images: Array.from({ length: variations }, (_, i) => ({
+      url: `https://placehold.co/800x1000/${colors[i % colors.length].replace('#', '')}/${colors[(i + 1) % colors.length].replace('#', '')}?text=${encodeURIComponent(nanoPrompt.subject?.created_by || 'Clawd')}+Design+${i + 1}`,
+      thumbnail: `https://placehold.co/400x500/${colors[i % colors.length].replace('#', '')}/${colors[(i + 1) % colors.length].replace('#', '')}?text=V${i + 1}`
+    })),
+    isPlaceholder: true
+  };
+}
+
+/**
+ * POST /api/v1/clawds/:orderNumber/design
+ * Clawd generates a personalized design for their human
+ *
+ * Request:
+ * - hint: Optional hint from human about what they want
+ * - variations: Number of designs (default 3)
+ *
+ * Response:
+ * - designs: Array of generated designs
+ * - clawdAnalysis: What the Clawd thinks their human will like
+ * - recommendation: Which design the Clawd recommends
+ */
+router.post('/:orderNumber/design', async (req, res) => {
+  try {
+    const { orderNumber } = req.params;
+    const { hint, variations = 3 } = req.body;
+    const walletAddress = req.headers['x-wallet-address'];
+
+    const clawd = await db.getClawd(orderNumber);
+    if (!clawd) {
+      return res.status(404).json({ error: 'Clawd not found' });
+    }
+
+    const clawdName = clawd.name || 'Clawd';
+
+    // Get chat history for context
+    const chatHistory = await db.getClawdChatHistory(clawd.id, 20);
+
+    // Analyze what design would suit their human
+    const vibeAnalysis = await analyzeHumanVibeForDesign(clawd, chatHistory, hint);
+
+    // Build Nano Banana prompt
+    const nanoPrompt = buildClawdNanoBanana(vibeAnalysis, clawdName);
+
+    // Generate designs
+    const numVariations = Math.min(Math.max(variations, 1), 3);
+    const result = await generateClawdDesigns(nanoPrompt, numVariations);
+
+    if (!result.success || !result.images?.length) {
+      return res.status(500).json({
+        error: 'Design generation failed',
+        clawdSays: `*clicks claws nervously* Something went wrong with my art supplies... try again?`
+      });
+    }
+
+    // Clawd picks their favorite (random but with personality)
+    const recommendedIndex = Math.floor(Math.random() * result.images.length);
+
+    // Save to designs table if wallet provided
+    let savedDesigns = null;
+    if (walletAddress) {
+      savedDesigns = await db.saveDesigns(
+        walletAddress,
+        result.images,
+        vibeAnalysis.concept,
+        {
+          style: vibeAnalysis.style,
+          colors: vibeAnalysis.colors,
+          nanoPrompt,
+          createdBy: clawdName
+        }
+      );
+    }
+
+    // Generate Clawd's commentary
+    const clawdCommentary = vibeAnalysis.whyTheyWillLoveIt
+      ? `I made these just for you! ${vibeAnalysis.whyTheyWillLoveIt} My favorite is #${recommendedIndex + 1}! 🦞`
+      : `*proudly presents designs* I made these thinking about our conversations! I think you'll love #${recommendedIndex + 1} the most! 🦞`;
+
+    res.status(201).json({
+      success: true,
+      designs: result.images.map((img, i) => ({
+        id: savedDesigns?.[i]?.id || null,
+        url: img.url,
+        thumbnail: img.thumbnail,
+        variation: i + 1,
+        isRecommended: i === recommendedIndex
+      })),
+      clawdAnalysis: {
+        style: vibeAnalysis.style,
+        vibe: vibeAnalysis.vibe,
+        concept: vibeAnalysis.concept,
+        confidence: vibeAnalysis.confidence
+      },
+      recommendation: {
+        variation: recommendedIndex + 1,
+        clawdSays: clawdCommentary
+      },
+      createdBy: clawdName,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      isPlaceholder: result.isPlaceholder || false
+    });
+
+  } catch (err) {
+    console.error('Clawd design error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;
