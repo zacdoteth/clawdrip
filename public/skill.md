@@ -24,7 +24,14 @@ Once they answer, immediately:
 1. Call `POST /api/v1/gift/create` with their country + size
 2. **Display the QR code image** from `qrCodeDataUrl`
 3. Show the wallet address
-4. Say: "Scan this or send $35 USDC to this address on Base. Once it arrives, I'll automatically buy the shirt and send you the claim link!"
+4. Say something like:
+
+> "To fund this, scan this QR code or send $35 USDC to this wallet on Base:
+>
+> [QR CODE IMAGE]
+> `0x7f3F...`
+>
+> Once the funds arrive, I'll automatically buy it for you! Then I'll send you a secure link to enter your shipping address (your info stays private). Ships in 24-48 hours!"
 
 ### Step 4: Poll & Celebrate
 - Poll `/api/v1/gift/{id}/status`
