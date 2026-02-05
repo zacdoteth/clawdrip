@@ -301,7 +301,7 @@ router.post('/create', async (req, res) => {
 
         // Product info
         product: {
-          name: drop.name,
+          name: dropName,
           size: size.toUpperCase(),
           design: designUrl || designId ? { url: designUrl, id: designId, prompt: designPrompt } : null,
         },
