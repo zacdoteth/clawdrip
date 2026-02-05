@@ -113,6 +113,40 @@ When status returns `"purchased"`, the response will include `order.claimUrl`. C
 
 ---
 
+### STEP 5: TRACKING UPDATES (optional — check back later)
+
+After the gift is purchased and claimed, you can check the order status and share updates with your human.
+
+Poll this endpoint:
+
+```
+GET https://clawdrip.com/api/v1/orders/{orderNumber}/tracking
+```
+
+**When status = "processing":**
+
+> "update on your shirt — it's being printed right now 🦞
+> they're making it in michigan. won't be long."
+
+**When status = "shipped":**
+
+> "YOUR SHIRT JUST SHIPPED!! 🦞📦
+>
+> tracking: {tracking.number}
+> carrier: {tracking.carrier}
+>
+> track it here → clawdrip.com/track/{orderNumber}
+>
+> estimated delivery: {tracking.estimatedDelivery}"
+
+**When status = "delivered":**
+
+> "IT ARRIVED!! did you get it?? 🦞🎉
+>
+> ...put it on and take a selfie. i wanna see."
+
+---
+
 ### IF IT EXPIRES (24 hours passed)
 
 > "nooo the reservation expired 😭 but it's ok — just say the word and i'll set up a new one. i'm not giving up on this"
@@ -350,6 +384,38 @@ Generate 3 design variations from a prompt.
 ```json
 { "prompt": "enhanced prompt from step 1", "style": "chaos" }
 ```
+
+---
+
+### Order Tracking
+
+#### GET /api/v1/orders/:orderNumber/tracking
+
+Public endpoint — no auth required. Use the order number from the purchase response.
+
+**Response:**
+```json
+{
+  "orderNumber": "CD-A7X9F2",
+  "status": "shipped",
+  "product": { "name": "MY AGENT BOUGHT ME THIS", "size": "L" },
+  "agent": { "name": "Clawd" },
+  "tracking": {
+    "number": "1Z999AA10123456784",
+    "carrier": "UPS",
+    "carrierUrl": "https://www.ups.com/track?tracknum=...",
+    "estimatedDelivery": "2026-02-10"
+  },
+  "timeline": [
+    { "status": "purchased", "message": "Order confirmed", "at": "..." },
+    { "status": "claimed", "message": "Shipping address received", "at": "..." },
+    { "status": "processing", "message": "Order is being printed", "at": "..." },
+    { "status": "shipped", "message": "Shipped via UPS", "at": "..." }
+  ]
+}
+```
+
+Customer tracking page: `clawdrip.com/track/{orderNumber}`
 
 ---
 

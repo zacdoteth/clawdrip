@@ -61,7 +61,10 @@ router.get('/orders', adminAuth, async (req, res) => {
         COUNT(*) FILTER (WHERE status = 'pending_claim') as pending_claim,
         COUNT(*) FILTER (WHERE status = 'claimed') as claimed,
         COUNT(*) FILTER (WHERE status = 'paid') as paid,
+        COUNT(*) FILTER (WHERE status = 'processing') as processing,
         COUNT(*) FILTER (WHERE status = 'shipped') as shipped,
+        COUNT(*) FILTER (WHERE status = 'in_transit') as in_transit,
+        COUNT(*) FILTER (WHERE status = 'out_for_delivery') as out_for_delivery,
         COUNT(*) FILTER (WHERE status = 'delivered') as delivered
       FROM orders`
     );
@@ -171,7 +174,7 @@ router.get('/orders/:id', adminAuth, async (req, res) => {
 router.patch('/orders/:id', adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, trackingNumber, notes } = req.body;
+    const { status, trackingNumber, notes, carrier, estimatedDelivery } = req.body;
 
     // Find order
     let order = await db.getOrderByNumber(id);
@@ -183,53 +186,88 @@ router.patch('/orders/:id', adminAuth, async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const validStatuses = ['pending_claim', 'claimed', 'paid', 'shipped', 'delivered', 'cancelled'];
+    const validStatuses = ['pending_claim', 'claimed', 'paid', 'processing', 'shipped', 'in_transit', 'out_for_delivery', 'delivered', 'cancelled'];
     if (status && !validStatuses.includes(status)) {
       return res.status(400).json({ error: 'Invalid status', validStatuses });
     }
 
-    // Build update query
-    const updates = [];
-    const params = [];
-    let paramIndex = 1;
+    // Update order status with all extras
+    const updated = await db.updateOrderStatus(order.id, status || order.status, {
+      carrier,
+      trackingNumber,
+      estimatedDelivery,
+      notes,
+    });
 
-    if (status) {
-      updates.push(`status = $${paramIndex++}`);
-      params.push(status);
+    if (!updated) {
+      return res.status(400).json({ error: 'Failed to update order' });
+    }
 
-      if (status === 'shipped') {
-        updates.push(`shipped_at = NOW()`);
+    // Auto-create order_event on status change
+    if (status && status !== order.status) {
+      const eventMessages = {
+        pending_claim: 'Order confirmed',
+        claimed: 'Shipping address received',
+        processing: 'Order is being printed',
+        shipped: `Shipped${carrier ? ` via ${carrier.toUpperCase()}` : ''}`,
+        in_transit: 'Package in transit',
+        out_for_delivery: 'Out for delivery',
+        delivered: 'Package delivered',
+        cancelled: 'Order cancelled',
+      };
+
+      try {
+        await db.createOrderEvent(order.id, {
+          status,
+          message: eventMessages[status] || `Status changed to ${status}`,
+          carrier: carrier || order.carrier,
+          trackingNumber: trackingNumber || order.tracking_number,
+          source: 'admin',
+        });
+      } catch (eventErr) {
+        console.error('Failed to create order event:', eventErr);
       }
     }
 
-    if (trackingNumber) {
-      updates.push(`tracking_number = $${paramIndex++}`);
-      params.push(trackingNumber);
-    }
-
-    if (notes) {
-      updates.push(`admin_notes = $${paramIndex++}`);
-      params.push(notes);
-    }
-
-    if (updates.length === 0) {
-      return res.status(400).json({ error: 'No updates provided' });
-    }
-
-    params.push(order.id);
-    const result = await db.query(
-      `UPDATE orders SET ${updates.join(', ')}, updated_at = NOW()
-       WHERE id = $${paramIndex}
-       RETURNING *`,
-      params
-    );
-
     res.json({
       success: true,
-      order: result.rows[0]
+      order: updated,
     });
   } catch (err) {
     console.error('Admin update order error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/v1/admin/orders/:id/event
+ * Add a tracking event without changing order status
+ */
+router.post('/orders/:id/event', adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message, location, carrier, trackingNumber } = req.body;
+
+    let order = await db.getOrderByNumber(id);
+    if (!order) order = await db.getOrder(id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    const event = await db.createOrderEvent(order.id, {
+      status: order.status,
+      message,
+      carrier: carrier || order.carrier,
+      trackingNumber: trackingNumber || order.tracking_number,
+      location,
+      source: 'admin',
+    });
+
+    res.json({ success: true, event });
+  } catch (err) {
+    console.error('Admin create event error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

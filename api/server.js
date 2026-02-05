@@ -195,8 +195,41 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
+// Run DB migration for order tracking (idempotent)
+async function runMigration() {
+  try {
+    await db.query(`
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS carrier VARCHAR(50);
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS label_url TEXT;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS processing_at TIMESTAMPTZ;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_delivery DATE;
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS order_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        order_id UUID NOT NULL REFERENCES orders(id),
+        status VARCHAR(50) NOT NULL,
+        message TEXT,
+        carrier VARCHAR(50),
+        tracking_number VARCHAR(255),
+        location VARCHAR(255),
+        source VARCHAR(50) DEFAULT 'admin',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_order_events_order_id ON order_events(order_id);
+    `);
+    console.log('DB migration: order tracking tables ready');
+  } catch (err) {
+    console.error('DB migration error (non-fatal):', err.message);
+  }
+}
+
 // Only start server if running directly (not imported by Vercel)
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  runMigration().then(() => {}).catch(() => {});
   app.listen(PORT, () => {
     console.log(`
   ╔═══════════════════════════════════════════════════════════╗

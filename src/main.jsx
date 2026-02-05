@@ -5,6 +5,7 @@ import ClawDrip from './App.jsx'
 import Tank from './Tank.jsx'
 import DesignStudio from './DesignStudio.jsx'
 import PayPage from './PayPage.jsx'
+import TrackPage from './TrackPage.jsx'
 
 // Mock window.storage API with localStorage
 window.storage = {
@@ -32,6 +33,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/design" element={<DesignStudio />} />
         <Route path="/tank/:orderNumber" element={<TankWrapper />} />
         <Route path="/pay/:giftId" element={<PayPage />} />
+        <Route path="/track/:orderNumber" element={<TrackPage />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>,

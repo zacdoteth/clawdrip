@@ -17,6 +17,17 @@ const WALLET_ADDRESS = process.env.WALLET_ADDRESS || '0xd9baf332b462a774ee8ec5ba
 
 const router = Router();
 
+// Carrier tracking URL helper
+function getCarrierTrackingUrl(carrier, trackingNumber) {
+  if (!carrier || !trackingNumber) return null;
+  const urls = {
+    ups: `https://www.ups.com/track?tracknum=${trackingNumber}`,
+    usps: `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`,
+    fedex: `https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}`,
+  };
+  return urls[carrier.toLowerCase()] || null;
+}
+
 // Event emitter for supply updates (used by SSE)
 const supplyListeners = new Set();
 
@@ -34,6 +45,94 @@ export function addSupplyListener(fn) {
   supplyListeners.add(fn);
   return () => supplyListeners.delete(fn);
 }
+
+/**
+ * GET /api/v1/orders/:orderNumber/tracking
+ * Public tracking endpoint — no auth required
+ * Order number acts as auth token (random enough)
+ */
+router.get('/:orderNumber/tracking', async (req, res) => {
+  try {
+    const { orderNumber } = req.params;
+
+    const tracking = await db.getOrderTracking(orderNumber);
+    if (!tracking) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const { order, events } = tracking;
+
+    // Build timeline from order timestamps + events
+    const timeline = [];
+
+    // Always add purchase event
+    timeline.push({
+      status: 'purchased',
+      message: 'Order confirmed',
+      at: order.created_at,
+    });
+
+    // Add claimed event if applicable
+    if (order.claimed_at) {
+      timeline.push({
+        status: 'claimed',
+        message: 'Shipping address received',
+        at: order.claimed_at,
+      });
+    }
+
+    // Add events from order_events table
+    for (const event of events) {
+      // Skip duplicates for purchased/claimed (already added from timestamps)
+      if (event.status === 'pending_claim' || event.status === 'claimed') continue;
+      timeline.push({
+        status: event.status,
+        message: event.message,
+        location: event.location || undefined,
+        at: event.created_at,
+      });
+    }
+
+    // If no events exist for processing/shipped/delivered, add from timestamps
+    const eventStatuses = new Set(events.map(e => e.status));
+    if (order.processing_at && !eventStatuses.has('processing')) {
+      timeline.push({ status: 'processing', message: 'Order is being printed', at: order.processing_at });
+    }
+    if (order.shipped_at && !eventStatuses.has('shipped')) {
+      timeline.push({ status: 'shipped', message: `Shipped${order.carrier ? ` via ${order.carrier.toUpperCase()}` : ''}`, at: order.shipped_at });
+    }
+    if (order.delivered_at && !eventStatuses.has('delivered')) {
+      timeline.push({ status: 'delivered', message: 'Package delivered', at: order.delivered_at });
+    }
+
+    // Sort timeline by date
+    timeline.sort((a, b) => new Date(a.at) - new Date(b.at));
+
+    const carrierUrl = getCarrierTrackingUrl(order.carrier, order.tracking_number);
+
+    res.json({
+      orderNumber: order.order_number,
+      status: order.status,
+      product: {
+        name: order.product_name,
+        size: order.size,
+      },
+      agent: order.agent_name ? {
+        name: order.agent_name,
+      } : null,
+      tracking: order.tracking_number ? {
+        number: order.tracking_number,
+        carrier: order.carrier ? order.carrier.toUpperCase() : null,
+        carrierUrl,
+        estimatedDelivery: order.estimated_delivery,
+      } : null,
+      timeline,
+    });
+  } catch (err) {
+    console.error('Tracking endpoint error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 /**
  * GET /api/v1/orders/:id
