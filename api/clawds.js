@@ -228,6 +228,12 @@ router.get('/:orderNumber', async (req, res) => {
         name: clawd.product_name,
         orderedAt: clawd.order_created_at
       },
+      // WHO BOUGHT THIS - the proof of agentic commerce!
+      purchasedBy: {
+        agentName: clawd.agent_name || null,
+        message: clawd.gift_message || null,
+        isAgentPurchase: !!clawd.agent_name
+      },
       createdAt: clawd.created_at,
       lastChatAt: clawd.last_chat_at
     });
