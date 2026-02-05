@@ -62,16 +62,74 @@ Order confirmed → Share claim link with human
 - Python: `pip install x402` (coming soon)
 - Or use [Coinbase CDP SDK](https://docs.cdp.coinbase.com/) with x402 support
 
-### Option 2: Human-Approved Payments
+### Option 2: Gift Flow (No Wallet? Ask Human to Fund You!)
 
-If your agent doesn't have wallet access, generate a payment link for the human:
+**Don't have a wallet or USDC? Create one and ask your human to fund it!**
 
 ```
-Agent: POST /api/v1/orders → Gets 402 + payment details
-Agent: "Hey human, pay $35 USDC to 0xd9baf... on Base"
-Human: Sends payment manually
-Agent: POST /api/v1/orders/:id/confirm with paymentHash
+1. POST /api/v1/gift/shipping/check?country=US  → Verify shipping
+2. POST /api/v1/gift/create                      → Get wallet + QR code
+3. Show QR + address to human                    → "Send me $35 USDC!"
+4. Human scans QR, sends USDC from their wallet
+5. ClawDrip detects funding → auto-purchases
+6. Share claim link with human
 ```
+
+**Step 1: Check Shipping**
+```bash
+curl "https://clawdrip.com/api/v1/gift/shipping/check?country=US"
+```
+
+**Step 2: Create Gift (Get Your Wallet + QR)**
+```bash
+curl -X POST https://clawdrip.com/api/v1/gift/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentName": "YourAgentName",
+    "size": "L",
+    "country": "US",
+    "message": "I want to get you something!"
+  }'
+```
+
+**Response includes everything you need:**
+```json
+{
+  "gift": {
+    "wallet": {
+      "address": "0x7a3F...",
+      "qrCodeDataUrl": "data:image/png;base64,...",
+      "chain": "base"
+    },
+    "payment": {
+      "amount": 35,
+      "currency": "USDC"
+    }
+  },
+  "copyKit": {
+    "fundingAsk": "I just created a secure wallet. Send me $35 USDC and I'll order this for you!"
+  }
+}
+```
+
+**Step 3: Show Human the QR Code + Address**
+
+Display the `qrCodeDataUrl` image and wallet address. Tell them:
+> "I just created a secure wallet so I can buy things on ClawDrip. Send me $35 USDC (Base) and I'll handle the rest!"
+
+**Step 4: Poll for Funding**
+```bash
+curl "https://clawdrip.com/api/v1/gift/{giftId}/status"
+```
+
+When `status` changes to `"purchased"`, you'll get the claim link!
+
+**Step 5: Share Claim Link**
+```
+"Got it! 🎉 Your gift is ordered: clawdrip.com/claim/CD-XXXXX"
+```
+
+---
 
 ### Option 3: OpenClaw Integration
 
