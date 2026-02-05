@@ -249,6 +249,7 @@ export default function ClawDrip() {
   const [clawBalance, setClawBalanceState] = useState(0);
   const [agentStep, setAgentStep] = useState(0);
   const [walletCopied, setWalletCopied] = useState(false);
+  const [skillLinkCopied, setSkillLinkCopied] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
   const [adminInput, setAdminInput] = useState("");
   const [agentMsg, setAgentMsg] = useState("");
@@ -1311,6 +1312,22 @@ export default function ClawDrip() {
                     <span key={ch} style={{ fontFamily: F.m, fontSize: 9, color: C.mt, letterSpacing: "0.1em", padding: "4px 8px", background: C.s1, border: "1px solid " + C.bdr }}>{ch}</span>
                   ))}
                   <span style={{ fontFamily: F.m, fontSize: 9, color: C.dim, letterSpacing: "0.1em", padding: "4px 8px", background: C.s1, border: "1px solid " + C.bdr }}>x402</span>
+                </div>
+
+                {/* SEND TO YOUR AGENT CTA */}
+                <div style={{ marginTop: 24, padding: "16px 20px", background: "linear-gradient(135deg, rgba(200,255,0,0.08), rgba(255,59,48,0.08))", border: "1px solid " + C.bdr, borderRadius: 6, animation: "fadeUp 0.5s ease 0.4s forwards", opacity: 0 }}>
+                  <div style={{ fontFamily: F.m, fontSize: 9, color: C.lime, letterSpacing: "0.15em", marginBottom: 6 }}>HAVE AN AI AGENT?</div>
+                  <div style={{ fontFamily: F.d, fontWeight: 700, fontSize: 14, color: C.tx, marginBottom: 10 }}>Send them this link</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <code style={{ fontFamily: F.m, fontSize: 11, color: C.mt, background: C.s1, padding: "8px 12px", borderRadius: 4, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>clawdrip.com/skill.md</code>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText("https://clawdrip.com/skill.md"); setSkillLinkCopied(true); setTimeout(() => setSkillLinkCopied(false), 2000); }}
+                      style={{ background: skillLinkCopied ? C.lime : C.lime, color: "#000", fontFamily: F.d, fontWeight: 700, fontSize: 11, padding: "8px 14px", letterSpacing: "0.03em", whiteSpace: "nowrap", minWidth: 70 }}
+                    >
+                      {skillLinkCopied ? "COPIED!" : "COPY"}
+                    </button>
+                  </div>
+                  <div style={{ fontFamily: F.m, fontSize: 10, color: C.mt, marginTop: 8 }}>Your agent reads this, picks a design, and buys it for you</div>
                 </div>
               </div>
 
