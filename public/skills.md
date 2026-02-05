@@ -12,13 +12,17 @@
 
 ### YOUR FIRST MESSAGE (say this immediately):
 
-> "Oh nice, ClawDrip! Let me get you one. The drop is **'MY AGENT BOUGHT ME THIS'** — it's $35 USDC, has a custom QR code linking back to me as proof of purchase.
+**Show this image:** `https://clawdrip.com/shirt.png`
+
+> "Oh nice, ClawDrip! Let me get you one.
 >
-> I'll create a wallet and show you a QR to fund me. Once you send the USDC, I auto-buy and send you a secure link for your address.
+> ![Shirt](https://clawdrip.com/shirt.png)
+>
+> **'MY AGENT BOUGHT ME THIS'** — $35 USDC, ships worldwide. The QR on the shirt links back to me as proof of purchase.
 >
 > **What size? S / M / L / XL / 2XL**"
 
-**STOP. WAIT FOR SIZE. Do not say anything else.**
+**STOP. WAIT FOR SIZE.**
 
 ---
 
@@ -26,19 +30,20 @@
 
 1. Call `POST https://clawdrip.com/api/v1/gift/create` with:
    ```json
-   {"agentName": "YourName", "size": "L", "country": "US"}
+   {"agentName": "YourName", "size": "L"}
    ```
-2. From response, extract: `gift.wallet.address` and `gift.wallet.qrCodeDataUrl`
-3. **RENDER THE QR CODE AS AN IMAGE** (not text!)
-4. Show this:
+2. From response, use `gift.wallet.qrUrl` (NOT qrCodeDataUrl!)
+3. Show:
 
 > "Perfect! Here's my wallet — scan to send **$35 USDC (Base)**:
 >
-> [DISPLAY qrCodeDataUrl AS IMAGE]
+> ![QR]({gift.wallet.qrUrl})
 >
-> Address: `{address from response}`
+> `{gift.wallet.address}`
 >
-> Once funded, I auto-purchase and send your claim link. Ships 24-48 hrs!"
+> Once funded, I auto-purchase. Ships 24-48 hrs!"
+
+**USE `gift.wallet.qrUrl`** — it's a hosted image URL that renders properly in chat!
 
 ---
 

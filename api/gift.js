@@ -183,7 +183,7 @@ router.post('/create', async (req, res) => {
       agentName = 'Your agent',
       agentId,           // Optional ERC-8004 ID
       size,              // T-shirt size
-      country,           // Pre-validated country code
+      country = 'US',    // Default to US for speed
       designId,          // If they already generated a design
       designUrl,         // Or direct URL to design image
       designPrompt,      // What the design is about
@@ -201,15 +201,8 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ error: 'Invalid size', validSizes });
     }
 
-    if (!country) {
-      return res.status(400).json({
-        error: 'Country required. Check shipping first.',
-        checkEndpoint: 'GET /api/v1/gift/shipping/check?country=XX'
-      });
-    }
-
     // Verify country is shippable
-    const countryCode = country.toUpperCase();
+    const countryCode = (country || 'US').toUpperCase();
     if (BLOCKED_COUNTRIES.has(countryCode)) {
       return res.status(400).json({
         error: 'Cannot ship to this country',
@@ -217,30 +210,29 @@ router.post('/create', async (req, res) => {
       });
     }
 
-    // Get current product/pricing
-    const drop = await db.getCurrentDrop();
-    if (!drop) {
-      return res.status(404).json({ error: 'No active drop' });
-    }
+    // FAST PATH: Skip DB call, hardcode price for speed
+    // The drop is always $35 USDC for "MY AGENT BOUGHT ME THIS"
+    const priceUSDC = 35;
+    const dropName = 'MY AGENT BOUGHT ME THIS';
 
-    const priceUSDC = drop.price_cents / 100;
-
-    // Generate a fresh wallet for this gift
+    // Generate a fresh wallet for this gift - FAST
     const wallet = Wallet.createRandom();
     const walletAddress = wallet.address;
     const privateKey = wallet.privateKey; // Store securely!
 
-    // Generate QR code for the wallet address
-    // Format: ethereum:address?value=amount (EIP-681 style, but simplified)
-    const qrData = walletAddress; // Just the address - user sends from their wallet app
+    // Generate gift ID first (needed for QR URL)
+    const giftId = `gift_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+
+    // Generate QR code - use hosted URL instead of base64 for reliability
+    const qrData = walletAddress;
     const qrCodeDataUrl = await QRCode.toDataURL(qrData, {
-      width: 400,
-      margin: 2,
+      width: 300,
+      margin: 1,
       color: { dark: '#000000', light: '#ffffff' }
     });
 
-    // Generate gift ID
-    const giftId = `gift_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+    // Hosted QR URL (renders better in chat apps)
+    const qrHostedUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${walletAddress}`;
 
     // Calculate expiry (24 hours - creates urgency)
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -271,8 +263,7 @@ router.post('/create', async (req, res) => {
       createdAt: new Date().toISOString(),
       expiresAt: expiresAt.toISOString(),
       product: {
-        name: drop.name,
-        dropId: drop.id,
+        name: dropName,
       }
     };
 
@@ -293,9 +284,13 @@ router.post('/create', async (req, res) => {
           address: walletAddress,
           addressShort: `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`,
           qrCodeDataUrl,
+          qrUrl: qrHostedUrl, // USE THIS - renders better in chat apps!
           chain: 'base',
           network: 'Base Mainnet',
         },
+
+        // Shirt preview image
+        shirtImage: 'https://clawdrip.com/shirt.png',
 
         // Payment details
         payment: {
