@@ -15,6 +15,7 @@ import clawdsRouter from './clawds.js';
 import designRouter from './design.js';
 import productsRouter from './products.js';
 import adminRouter from './admin.js';
+import giftRouter from './gift.js';
 import db from '../lib/db.js';
 
 // x402 Configuration
@@ -145,6 +146,7 @@ app.use('/api/v1/supply', supplyRouter);
 app.use('/api/v1/clawds', clawdsRouter);
 app.use('/api/v1/design', designRouter);
 app.use('/api/v1/admin', adminRouter);
+app.use('/api/v1/gift', giftRouter);
 
 // $CLAWDRIP balance lookup
 app.get('/api/v1/clawdrip/:wallet', async (req, res) => {
