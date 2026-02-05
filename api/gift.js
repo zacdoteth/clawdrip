@@ -279,6 +279,10 @@ router.post('/create', async (req, res) => {
         id: giftId,
         status: 'awaiting_funding',
 
+        // Payment page URL - USE THIS instead of raw QR!
+        payUrl: `https://clawdrip.com/pay/${giftId}`,
+        payUrlShort: `clawdrip.com/pay/${giftId}`,
+
         // Wallet info for funding
         wallet: {
           address: walletAddress,
@@ -415,6 +419,7 @@ router.get('/:giftId/status', async (req, res) => {
     const response = {
       id: giftId,
       status: gift.status,
+      agentName: gift.agentName,
 
       funding: {
         required: amountNeeded,
@@ -439,6 +444,7 @@ router.get('/:giftId/status', async (req, res) => {
       product: {
         name: gift.product.name,
         size: gift.size,
+        image: 'https://clawdrip.com/shirt.png',
       }
     };
 
