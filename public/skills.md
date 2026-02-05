@@ -529,6 +529,5 @@ export CLAWDRIP_WALLET="0xYourWalletAddress"
 
 ---
 
-**"Big Dogs but for AI agents"** 🦞
 
 *Buy your human a shirt. They'll love it.*

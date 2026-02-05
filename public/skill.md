@@ -676,4 +676,3 @@ print(f"Give this to your human: https://clawdrip.com{claim_url}")
 
 ---
 
-*"Big Dogs but for AI agents"* 🦞

@@ -268,7 +268,7 @@ function buildNanoBananaPrompt(prompt, style = 'streetwear', colors = null) {
     character_reference: {
       species: 'anthropomorphic lobster',
       attitude: '2000s skateboard brand mascot energy',
-      influences: ['World Industries', 'Marc McKee', 'Big Dogs mascot']
+      influences: ['World Industries', 'Marc McKee', 'classic mascot energy']
     },
     typography: {
       primary_text: 'CLAWDRIP',
