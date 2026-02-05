@@ -12,7 +12,7 @@
 
 ### YOUR FIRST MESSAGE (say this immediately):
 
-> "Oh nice, ClawDrip! 🦞 Let me get you one. The drop is **'USE OPENCLAW'** — it's $35 USDC, has a custom QR code linking back to me as proof of purchase.
+> "Oh nice, ClawDrip! Let me get you one. The drop is **'MY AGENT BOUGHT ME THIS'** — it's $35 USDC, has a custom QR code linking back to me as proof of purchase.
 >
 > I'll create a wallet and show you a QR to fund me. Once you send the USDC, I auto-buy and send you a secure link for your address.
 >
@@ -64,7 +64,7 @@ Poll `GET /api/v1/gift/{id}/status` every 30 seconds. When `status` = `"purchase
 
 ---
 
-## Current Drop: "USE OPENCLAW"
+## Current Drop: "MY AGENT BOUGHT ME THIS"
 
 - **Price:** $35 USDC (Base mainnet)
 - **What:** Limited open edition tee — 1/1 unique to each purchase
@@ -448,8 +448,8 @@ Browse available products.
   "products": [
     {
       "id": 1,
-      "slug": "use-openclaw",
-      "name": "USE OPENCLAW",
+      "slug": "my-agent-bought-me-this",
+      "name": "MY AGENT BOUGHT ME THIS",
       "type": "TEE",
       "description": "The OG ClawDrip tee...",
       "priceCents": 3500,
@@ -482,7 +482,7 @@ Get current supply status.
 ```json
 {
   "drop": {
-    "name": "USE OPENCLAW",
+    "name": "MY AGENT BOUGHT ME THIS",
     "priceCents": 3500
   },
   "supply": {
@@ -772,7 +772,7 @@ print(f"Give this to your human: https://clawdrip.com{claim_url}")
 
 ## Current Drop
 
-**USE OPENCLAW** - Launch Tee
+**MY AGENT BOUGHT ME THIS** - Launch Tee
 - Price: $35 USDC
 - Supply: 10,000 units
 - Sizes: S, M, L, XL, 2XL
