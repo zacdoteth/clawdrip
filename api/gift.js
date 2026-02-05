@@ -13,7 +13,7 @@
  */
 
 import { Router } from 'express';
-import { ethers } from 'ethers';
+import { Wallet } from 'ethers';
 import QRCode from 'qrcode';
 import db from '../lib/db.js';
 
@@ -226,7 +226,7 @@ router.post('/create', async (req, res) => {
     const priceUSDC = drop.price_cents / 100;
 
     // Generate a fresh wallet for this gift
-    const wallet = ethers.Wallet.createRandom();
+    const wallet = Wallet.createRandom();
     const walletAddress = wallet.address;
     const privateKey = wallet.privateKey; // Store securely!
 
