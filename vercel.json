@@ -11,7 +11,8 @@
     { "source": "/health", "destination": "/api/server.js" },
     { "source": "/skills.md", "destination": "/public/skills.md" },
     { "source": "/skill.json", "destination": "/public/skill.json" },
-    { "source": "/skill.md", "destination": "/public/skill.md" }
+    { "source": "/skill.md", "destination": "/public/skill.md" },
+    { "source": "/((?!api|health|skills\\.md|skill\\.json|skill\\.md).*)", "destination": "/index.html" }
   ],
   "headers": [
     {

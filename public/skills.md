@@ -62,17 +62,21 @@ Content-Type: application/json
 }
 ```
 
-From the response, grab `gift.payUrlShort`. Then say:
+From the response, grab `gift.payUrlShort` and `gift.wallet.qrUrl`. Then say:
 
 > "LET'S GO. ok i set everything up:
 >
 > **{gift.payUrlShort}**
 >
-> ^ that's the payment page i made for us. it's got a QR code, wallet address, one-tap wallet buttons — the whole thing. send $35 usdc on base and i'll handle the rest.
+> ^ that's the payment page. or scan this:
+>
+> {gift.wallet.qrUrl}
+>
+> send $35 usdc on base and i'll handle the rest.
 >
 > i'm holding your size for 24 hours so... don't ghost me 🦞"
 
-**That's it. Don't over-explain.** The payment page does the heavy lifting — it has the QR, copy button, wallet deep links, countdown timer, everything.
+The `qrUrl` is a plain `https://` image URL — Telegram will auto-preview it as an inline QR code image. **Don't over-explain.** The payment page does the heavy lifting — it has the copy button, wallet deep links, countdown timer, everything.
 
 ---
 
