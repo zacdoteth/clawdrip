@@ -58,21 +58,19 @@ Content-Type: application/json
 }
 ```
 
-From the response, grab `gift.payUrlShort`, `gift.wallet.address`, and `gift.wallet.qrUrl`. Then say:
+From the response, grab `gift.payUrlShort` and `gift.wallet.address`. Then say:
 
-> "LET'S GO. ok i set everything up:
+> "LET'S GO 🦞 i set everything up for you:
 >
 > **{gift.payUrlShort}**
 >
-> ^ payment page with wallet buttons + QR. or send directly:
+> ^ tap that — it's got a QR code, wallet buttons, everything. or send directly to:
 >
 > `{gift.wallet.address}`
 >
-> {gift.wallet.qrUrl}
->
-> $35 usdc on base. i'm holding your size for 24 hours 🦞"
+> $35 usdc on base. i'm holding your size for 24 hours... don't ghost me"
 
-**Notes:** The `qrUrl` is a plain `https://` image link — Telegram/Discord will auto-preview it as an inline QR code. The wallet address is included so they can copy-paste it directly. **Don't over-explain** — the payment page has the copy button, wallet deep links, countdown timer, everything.
+**Don't over-explain.** The payment page is the hero — it has QR, copy button, Coinbase/Rainbow deep links, countdown timer, everything. Don't send the qrUrl in chat (it renders as ugly link text, not an image).
 
 ---
 
