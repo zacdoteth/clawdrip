@@ -21,7 +21,7 @@ import db from '../lib/db.js';
 // x402 Configuration
 const WALLET_ADDRESS = process.env.WALLET_ADDRESS || '0xd9baf332b462a774ee8ec5ba8e54d43dfaab7093';
 const X402_FACILITATOR = process.env.X402_FACILITATOR_URL || 'https://x402.org/facilitator';
-const NETWORK = process.env.X402_NETWORK || 'base-sepolia'; // Use base-sepolia for testnet, 'base' for mainnet
+const NETWORK = process.env.X402_NETWORK || 'base'; // x402-express supports base/base-sepolia in this version
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -109,7 +109,8 @@ app.get('/skill.json', (req, res) => {
 // x402 Payment Middleware for orders that require payment
 // This intercepts requests and verifies payment headers
 const x402Routes = {
-  'POST /api/v1/orders/pay': {
+  // Protect the actual checkout creation route used by the frontend/API.
+  'POST /api/v1/orders': {
     price: '$35',  // Base price in USD
     network: NETWORK,
     config: {

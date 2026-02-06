@@ -57,6 +57,60 @@ const SHIPPING_ESTIMATES = {
   DEFAULT: '10-21 days',
 };
 
+const BASE_USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+function getWalletLinks(address, amount) {
+  return {
+    coinbase: `https://go.cb-w.com/pay?address=${address}&amount=${amount}&asset=USDC&chainId=8453`,
+    rainbow: `rainbow://send?address=${address}&amount=${amount}&assetAddress=${BASE_USDC_ADDRESS}&chainId=8453`,
+    metamask: `https://metamask.app.link/send/${BASE_USDC_ADDRESS}@8453/transfer?address=${address}&uint256=${Math.round(amount * 1e6)}`,
+    generic: `ethereum:${BASE_USDC_ADDRESS}@8453/transfer?address=${address}&uint256=${Math.round(amount * 1e6)}`,
+  };
+}
+
+function escapeXml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildGiftShareSvg({ giftId, agentName, size, amount, walletAddress, qrDataUrl, payUrlShort }) {
+  const safeAgent = escapeXml(agentName || 'Your agent');
+  const safeSize = escapeXml(size || 'L');
+  const safeAmount = Number(amount || 35).toFixed(2);
+  const safeWalletShort = escapeXml(`${walletAddress.slice(0, 8)}...${walletAddress.slice(-6)}`);
+  const safePayUrl = escapeXml(payUrlShort || `clawdrip.com/pay/${giftId}`);
+  const safeQr = escapeXml(qrDataUrl || '');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#030303" />
+      <stop offset="70%" stop-color="#0A0A0A" />
+      <stop offset="100%" stop-color="#111111" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)" />
+  <rect x="30" y="30" width="1140" height="570" rx="28" fill="#0A0A0A" stroke="#1A1A1A" />
+  <text x="72" y="102" fill="#F0EDE6" font-size="52" font-weight="800" font-family="Syne, Arial, sans-serif">CLAW<tspan fill="#FF3B30">DRIP</tspan></text>
+  <text x="72" y="160" fill="#C8FF00" font-size="20" font-weight="600" font-family="Outfit, Arial, sans-serif">AI GIFT PAYMENT REQUEST</text>
+  <text x="72" y="224" fill="#F0EDE6" font-size="40" font-weight="700" font-family="Syne, Arial, sans-serif">$${safeAmount} USDC on Base</text>
+  <text x="72" y="272" fill="#A8A8A8" font-size="26" font-weight="500" font-family="Outfit, Arial, sans-serif">${safeAgent} is buying you a gift</text>
+  <text x="72" y="318" fill="#F0EDE6" font-size="24" font-weight="500" font-family="Outfit, Arial, sans-serif">Reserved size: ${safeSize}</text>
+  <text x="72" y="364" fill="#A8A8A8" font-size="22" font-weight="400" font-family="JetBrains Mono, monospace">Wallet: ${safeWalletShort}</text>
+  <text x="72" y="408" fill="#A8A8A8" font-size="22" font-weight="400" font-family="JetBrains Mono, monospace">Pay page: ${safePayUrl}</text>
+  <rect x="72" y="458" width="470" height="84" rx="14" fill="#111111" stroke="#1A1A1A" />
+  <text x="98" y="510" fill="#F0EDE6" font-size="28" font-weight="600" font-family="Outfit, Arial, sans-serif">Send exactly $${safeAmount} USDC</text>
+  <rect x="786" y="140" width="320" height="320" rx="20" fill="#FFFFFF" />
+  <image x="806" y="160" width="280" height="280" href="${safeQr}" />
+  <text x="786" y="510" fill="#A8A8A8" font-size="22" font-weight="500" font-family="Outfit, Arial, sans-serif">Scan QR to pay instantly</text>
+</svg>`;
+}
+
 // In-memory gift store (use Redis/DB in production)
 const giftStore = new Map();
 
@@ -252,6 +306,7 @@ router.post('/create', async (req, res) => {
       wallet: {
         address: walletAddress,
         privateKey, // In production, encrypt this!
+        qrCodeDataUrl,
       },
       pricing: {
         amount: priceUSDC,
@@ -291,6 +346,7 @@ router.post('/create', async (req, res) => {
           qrUrl: qrHostedUrl, // USE THIS - renders better in chat apps!
           chain: 'base',
           network: 'Base Mainnet',
+          links: getWalletLinks(walletAddress, priceUSDC),
         },
 
         // Shirt preview image
@@ -329,6 +385,7 @@ router.post('/create', async (req, res) => {
 
         // Status endpoint
         statusUrl: `/api/v1/gift/${giftId}/status`,
+        shareImageUrl: `/api/v1/gift/${giftId}/share-image`,
       },
 
       // ========================================
@@ -380,6 +437,38 @@ router.post('/create', async (req, res) => {
 });
 
 /**
+ * GET /api/v1/gift/:giftId/share-image
+ *
+ * Generate a branded payment image that agents can upload/attach in chat.
+ */
+router.get('/:giftId/share-image', async (req, res) => {
+  try {
+    const { giftId } = req.params;
+    const gift = giftStore.get(giftId);
+    if (!gift) {
+      return res.status(404).json({ error: 'Gift not found' });
+    }
+
+    const svg = buildGiftShareSvg({
+      giftId,
+      agentName: gift.agentName,
+      size: gift.size,
+      amount: gift.pricing?.amount || 35,
+      walletAddress: gift.wallet.address,
+      qrDataUrl: gift.wallet.qrCodeDataUrl,
+      payUrlShort: `clawdrip.com/pay/${giftId}`,
+    });
+
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.send(svg);
+  } catch (err) {
+    console.error('Gift share-image error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
  * GET /api/v1/gift/:giftId/status
  *
  * Check gift status. Agent polls this to detect funding.
@@ -420,6 +509,9 @@ router.get('/:giftId/status', async (req, res) => {
       id: giftId,
       status: gift.status,
       agentName: gift.agentName,
+      payUrl: `https://clawdrip.com/pay/${giftId}`,
+      payUrlShort: `clawdrip.com/pay/${giftId}`,
+      shareImageUrl: `https://clawdrip.com/api/v1/gift/${giftId}/share-image`,
 
       funding: {
         required: amountNeeded,
@@ -432,6 +524,11 @@ router.get('/:giftId/status', async (req, res) => {
         wallet: {
           address: gift.wallet.address,
           addressShort: `${gift.wallet.address.slice(0, 6)}...${gift.wallet.address.slice(-4)}`,
+          qrCodeDataUrl: gift.wallet.qrCodeDataUrl || null,
+          qrUrl: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${gift.wallet.address}`,
+          chain: 'base',
+          network: 'Base Mainnet',
+          links: getWalletLinks(gift.wallet.address, amountNeeded),
         }
       },
 
