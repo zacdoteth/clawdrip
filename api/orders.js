@@ -7,6 +7,7 @@
 
 import { Router } from 'express';
 import QRCode from 'qrcode';
+import { JsonRpcProvider, getAddress, id as keccakId } from 'ethers';
 import db from '../lib/db.js';
 
 // x402 middleware configuration
@@ -14,8 +15,99 @@ import db from '../lib/db.js';
 // and return 402 Payment Required with payment instructions
 const FACILITATOR_URL = process.env.X402_FACILITATOR_URL || 'https://x402.org/facilitator';
 const WALLET_ADDRESS = process.env.WALLET_ADDRESS || '0xd9baf332b462a774ee8ec5ba8e54d43dfaab7093';
+const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
+const BASE_USDC_ADDRESS = (process.env.BASE_USDC_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913').toLowerCase();
+const TRANSFER_TOPIC = keccakId('Transfer(address,address,uint256)');
+
+const BLOCKED_COUNTRIES = new Set(['KP', 'RU', 'IR', 'CU', 'SY', 'BY']);
+const BLOCKED_COUNTRY_ALIASES = new Map([
+  ['north korea', 'KP'],
+  ['russia', 'RU'],
+  ['iran', 'IR'],
+  ['cuba', 'CU'],
+  ['syria', 'SY'],
+  ['belarus', 'BY'],
+]);
+const BLOCKED_REGION_PATTERNS = [
+  /crimea/i,
+  /donetsk/i,
+  /luhansk/i,
+];
 
 const router = Router();
+let baseProvider;
+
+function getBaseProvider() {
+  if (!baseProvider) {
+    baseProvider = new JsonRpcProvider(BASE_RPC_URL);
+  }
+  return baseProvider;
+}
+
+function normalizeCountryCode(country) {
+  if (!country) return '';
+  const trimmed = String(country).trim();
+  const upper = trimmed.toUpperCase();
+  if (/^[A-Z]{2}$/.test(upper)) return upper;
+  return BLOCKED_COUNTRY_ALIASES.get(trimmed.toLowerCase()) || upper;
+}
+
+function isBlockedRegion(value) {
+  if (!value) return false;
+  return BLOCKED_REGION_PATTERNS.some((pattern) => pattern.test(String(value)));
+}
+
+async function verifyUsdcPaymentOnBase({ paymentHash, requiredAmountUSDC, recipient }) {
+  if (!/^0x[a-fA-F0-9]{64}$/.test(paymentHash || '')) {
+    return { ok: false, reason: 'Invalid payment hash format' };
+  }
+
+  const provider = getBaseProvider();
+  const receipt = await provider.getTransactionReceipt(paymentHash);
+  if (!receipt) {
+    return { ok: false, reason: 'Payment transaction not found on Base yet' };
+  }
+  if (receipt.status !== 1) {
+    return { ok: false, reason: 'Payment transaction failed on-chain' };
+  }
+
+  let paidUSDCBaseUnits = 0n;
+  const normalizedRecipient = getAddress(recipient).toLowerCase();
+
+  for (const log of receipt.logs || []) {
+    if (!log?.address || log.address.toLowerCase() !== BASE_USDC_ADDRESS) continue;
+    if (!log?.topics || log.topics[0] !== TRANSFER_TOPIC || log.topics.length < 3) continue;
+
+    let to;
+    try {
+      to = getAddress(`0x${log.topics[2].slice(-40)}`).toLowerCase();
+    } catch {
+      continue;
+    }
+
+    if (to !== normalizedRecipient) continue;
+
+    try {
+      paidUSDCBaseUnits += BigInt(log.data);
+    } catch {
+      // Ignore malformed logs.
+    }
+  }
+
+  const requiredBaseUnits = BigInt(Math.round(Number(requiredAmountUSDC) * 1_000_000));
+  if (paidUSDCBaseUnits < requiredBaseUnits) {
+    return {
+      ok: false,
+      reason: `Insufficient USDC transfer. Required ${requiredAmountUSDC}, received ${(Number(paidUSDCBaseUnits) / 1_000_000).toFixed(6)}`
+    };
+  }
+
+  return {
+    ok: true,
+    paidUSDC: Number(paidUSDCBaseUnits) / 1_000_000,
+    blockNumber: receipt.blockNumber,
+  };
+}
 
 // Carrier tracking URL helper
 function getCarrierTrackingUrl(carrier, trackingNumber) {
@@ -436,6 +528,38 @@ router.post('/:reservationId/confirm', async (req, res) => {
       });
     }
 
+    if (!paymentHash) {
+      return res.status(400).json({ error: 'paymentHash is required' });
+    }
+
+    // Prevent replaying the same transaction hash across orders.
+    const existingPayment = await db.query(
+      `SELECT id, order_number FROM orders WHERE payment_hash = $1 LIMIT 1`,
+      [paymentHash]
+    );
+    if (existingPayment.rows.length > 0) {
+      return res.status(409).json({
+        error: 'Payment hash already used',
+        orderNumber: existingPayment.rows[0].order_number,
+      });
+    }
+
+    const requireStrictVerification = process.env.NODE_ENV === 'production' &&
+      process.env.ALLOW_UNVERIFIED_PAYMENT !== 'true';
+    if (requireStrictVerification) {
+      const verification = await verifyUsdcPaymentOnBase({
+        paymentHash,
+        requiredAmountUSDC: reservation.price_cents / 100,
+        recipient: WALLET_ADDRESS,
+      });
+      if (!verification.ok) {
+        return res.status(402).json({
+          error: 'Payment verification failed',
+          reason: verification.reason,
+        });
+      }
+    }
+
     // Validate custom design if provided
     let customDesign = null;
     if (designId && walletAddress) {
@@ -604,6 +728,20 @@ router.post('/:orderId/claim', async (req, res) => {
       });
     }
 
+    // Enforce sanctions at claim time as a final compliance gate.
+    const countryCode = normalizeCountryCode(country);
+    if (BLOCKED_COUNTRIES.has(countryCode)) {
+      return res.status(400).json({
+        error: 'Cannot ship to this country due to restrictions',
+        country: countryCode,
+      });
+    }
+    if (isBlockedRegion(state) || isBlockedRegion(city) || isBlockedRegion(address1) || isBlockedRegion(address2)) {
+      return res.status(400).json({
+        error: 'Cannot ship to this region due to restrictions',
+      });
+    }
+
     // Get order (try by order number first)
     let order = await db.getOrderByNumber(orderId);
     if (!order) {
@@ -710,6 +848,15 @@ router.post('/:reservationId/extend', async (req, res) => {
  */
 router.post('/pay', async (req, res) => {
   try {
+    // Legacy endpoint kept for local/dev testing only.
+    // In production, force clients onto reserve+confirm flow with explicit verification.
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(410).json({
+        error: 'Deprecated endpoint',
+        message: 'Use POST /api/v1/orders then POST /api/v1/orders/:reservationId/confirm'
+      });
+    }
+
     const { size, agentName, giftMessage, reservationId } = req.body;
 
     // If we have a reservation ID, confirm it

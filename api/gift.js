@@ -13,7 +13,7 @@
  */
 
 import { Router } from 'express';
-import { Wallet } from 'ethers';
+import { Wallet, Contract, JsonRpcProvider } from 'ethers';
 import QRCode from 'qrcode';
 import db from '../lib/db.js';
 
@@ -58,6 +58,12 @@ const SHIPPING_ESTIMATES = {
 };
 
 const BASE_USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
+const USDC_ABI = ['function balanceOf(address account) view returns (uint256)'];
+let giftDbReady = null;
+let giftDbUnavailableLogged = false;
+let baseProvider;
+let usdcContract;
 
 function getWalletLinks(address, amount) {
   return {
@@ -66,6 +72,25 @@ function getWalletLinks(address, amount) {
     metamask: `https://metamask.app.link/send/${BASE_USDC_ADDRESS}@8453/transfer?address=${address}&uint256=${Math.round(amount * 1e6)}`,
     generic: `ethereum:${BASE_USDC_ADDRESS}@8453/transfer?address=${address}&uint256=${Math.round(amount * 1e6)}`,
   };
+}
+
+function getBaseProvider() {
+  if (!baseProvider) {
+    baseProvider = new JsonRpcProvider(BASE_RPC_URL);
+  }
+  return baseProvider;
+}
+
+function getUsdcContract() {
+  if (!usdcContract) {
+    usdcContract = new Contract(BASE_USDC_ADDRESS, USDC_ABI, getBaseProvider());
+  }
+  return usdcContract;
+}
+
+async function getUsdcBalance(address) {
+  const balance = await getUsdcContract().balanceOf(address);
+  return Number(balance) / 1_000_000;
 }
 
 function escapeXml(value = '') {
@@ -113,6 +138,85 @@ function buildGiftShareSvg({ giftId, agentName, size, amount, walletAddress, qrD
 
 // In-memory gift store (use Redis/DB in production)
 const giftStore = new Map();
+
+function getBaseUrl(req) {
+  const envBase = process.env.PUBLIC_BASE_URL;
+  if (envBase) return envBase.replace(/\/$/, '');
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+  const host = req.get('x-forwarded-host') || req.get('host') || 'clawdrip.com';
+  return `${proto}://${host}`;
+}
+
+async function ensureGiftStorage() {
+  if (giftDbReady !== null) return giftDbReady;
+
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS gifts (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        expires_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_gifts_status ON gifts(status);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_gifts_expires_at ON gifts(expires_at);`);
+    giftDbReady = true;
+    return true;
+  } catch (err) {
+    giftDbReady = false;
+    if (!giftDbUnavailableLogged) {
+      console.warn('Gift DB storage unavailable, falling back to in-memory gift store:', err.message);
+      giftDbUnavailableLogged = true;
+    }
+    return false;
+  }
+}
+
+async function persistGift(gift) {
+  giftStore.set(gift.id, gift);
+
+  const storageReady = await ensureGiftStorage();
+  if (!storageReady) return;
+
+  try {
+    await db.query(
+      `INSERT INTO gifts (id, data, status, expires_at, updated_at)
+       VALUES ($1, $2::jsonb, $3, $4, NOW())
+       ON CONFLICT (id) DO UPDATE
+       SET data = EXCLUDED.data,
+           status = EXCLUDED.status,
+           expires_at = EXCLUDED.expires_at,
+           updated_at = NOW()`,
+      [gift.id, JSON.stringify(gift), gift.status, gift.expiresAt || null]
+    );
+  } catch (err) {
+    if (!giftDbUnavailableLogged) {
+      console.warn('Failed to persist gift record, using in-memory fallback:', err.message);
+      giftDbUnavailableLogged = true;
+    }
+  }
+}
+
+async function loadGift(giftId) {
+  const cached = giftStore.get(giftId);
+  if (cached) return cached;
+
+  const storageReady = await ensureGiftStorage();
+  if (!storageReady) return null;
+
+  try {
+    const result = await db.query(`SELECT data FROM gifts WHERE id = $1 LIMIT 1`, [giftId]);
+    const row = result.rows[0];
+    if (!row?.data) return null;
+    giftStore.set(giftId, row.data);
+    return row.data;
+  } catch (err) {
+    return null;
+  }
+}
 
 // Track daily stats for social proof
 let dailyGiftCount = 0;
@@ -233,6 +337,7 @@ router.get('/shipping/countries', (req, res) => {
  */
 router.post('/create', async (req, res) => {
   try {
+    const baseUrl = getBaseUrl(req);
     const {
       agentName = 'Your agent',
       agentId,           // Optional ERC-8004 ID
@@ -264,6 +369,32 @@ router.post('/create', async (req, res) => {
       });
     }
 
+    // Optional: attach a generated custom design to this gift.
+    let resolvedDesign = null;
+    if (designId) {
+      const design = await db.getDesignById(designId);
+      if (!design) {
+        return res.status(400).json({ error: 'Invalid designId' });
+      }
+      if (new Date(design.expires_at) < new Date()) {
+        return res.status(400).json({ error: 'Design expired', designId });
+      }
+      if (design.used_in_order_id) {
+        return res.status(400).json({ error: 'Design already used', designId });
+      }
+      resolvedDesign = {
+        id: design.id,
+        url: design.image_url,
+        prompt: design.prompt,
+        style: design.style,
+        colors: design.colors || null,
+      };
+    }
+
+    const resolvedDesignUrl = designUrl || resolvedDesign?.url || null;
+    const resolvedDesignPrompt = designPrompt || resolvedDesign?.prompt || null;
+    const resolvedDesignStyle = resolvedDesign?.style || null;
+
     // FAST PATH: Skip DB call, hardcode price for speed
     // The drop is always $35 USDC for "MY AGENT BOUGHT ME THIS"
     const priceUSDC = 35;
@@ -272,7 +403,6 @@ router.post('/create', async (req, res) => {
     // Generate a fresh wallet for this gift - FAST
     const wallet = Wallet.createRandom();
     const walletAddress = wallet.address;
-    const privateKey = wallet.privateKey; // Store securely!
 
     // Generate gift ID first (needed for QR URL)
     const giftId = `gift_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
@@ -299,13 +429,13 @@ router.post('/create', async (req, res) => {
       size: size.toUpperCase(),
       country: countryCode,
       designId,
-      designUrl,
-      designPrompt,
+      designUrl: resolvedDesignUrl,
+      designPrompt: resolvedDesignPrompt,
+      designStyle: resolvedDesignStyle,
       message,
       webhookUrl,
       wallet: {
         address: walletAddress,
-        privateKey, // In production, encrypt this!
         qrCodeDataUrl,
       },
       pricing: {
@@ -319,10 +449,11 @@ router.post('/create', async (req, res) => {
       expiresAt: expiresAt.toISOString(),
       product: {
         name: dropName,
+        image: resolvedDesignUrl || 'https://clawdrip.com/shirt.png',
       }
     };
 
-    giftStore.set(giftId, giftData);
+    await persistGift(giftData);
 
     // Increment social proof counter
     const todayCount = incrementDailyCount();
@@ -335,7 +466,7 @@ router.post('/create', async (req, res) => {
         status: 'awaiting_funding',
 
         // Payment page URL - USE THIS instead of raw QR!
-        payUrl: `https://clawdrip.com/pay/${giftId}`,
+        payUrl: `${baseUrl}/pay/${giftId}`,
         payUrlShort: `clawdrip.com/pay/${giftId}`,
 
         // Wallet info for funding
@@ -350,7 +481,7 @@ router.post('/create', async (req, res) => {
         },
 
         // Shirt preview image
-        shirtImage: 'https://clawdrip.com/shirt.png',
+        shirtImage: resolvedDesignUrl || 'https://clawdrip.com/shirt.png',
 
         // Payment details
         payment: {
@@ -363,7 +494,13 @@ router.post('/create', async (req, res) => {
         product: {
           name: dropName,
           size: size.toUpperCase(),
-          design: designUrl || designId ? { url: designUrl, id: designId, prompt: designPrompt } : null,
+          image: resolvedDesignUrl || 'https://clawdrip.com/shirt.png',
+          design: resolvedDesignUrl || designId ? {
+            url: resolvedDesignUrl,
+            id: designId || resolvedDesign?.id || null,
+            prompt: resolvedDesignPrompt,
+            style: resolvedDesignStyle,
+          } : null,
         },
 
         // Shipping
@@ -385,7 +522,7 @@ router.post('/create', async (req, res) => {
 
         // Status endpoint
         statusUrl: `/api/v1/gift/${giftId}/status`,
-        shareImageUrl: `/api/v1/gift/${giftId}/share-image`,
+        shareImageUrl: `${baseUrl}/api/v1/gift/${giftId}/share-image`,
       },
 
       // ========================================
@@ -444,24 +581,47 @@ router.post('/create', async (req, res) => {
 router.get('/:giftId/share-image', async (req, res) => {
   try {
     const { giftId } = req.params;
-    const gift = giftStore.get(giftId);
+    const { format } = req.query;
+    const gift = await loadGift(giftId);
     if (!gift) {
       return res.status(404).json({ error: 'Gift not found' });
     }
 
-    const svg = buildGiftShareSvg({
-      giftId,
-      agentName: gift.agentName,
-      size: gift.size,
-      amount: gift.pricing?.amount || 35,
-      walletAddress: gift.wallet.address,
-      qrDataUrl: gift.wallet.qrCodeDataUrl,
-      payUrlShort: `clawdrip.com/pay/${giftId}`,
+    const amount = gift.pricing?.amount || 35;
+    const payUrl = `https://clawdrip.com/pay/${giftId}`;
+
+    // Default to PNG for broad messenger compatibility (e.g., Telegram sendPhoto).
+    if (format === 'svg') {
+      const svg = buildGiftShareSvg({
+        giftId,
+        agentName: gift.agentName,
+        size: gift.size,
+        amount,
+        walletAddress: gift.wallet.address,
+        qrDataUrl: gift.wallet.qrCodeDataUrl,
+        payUrlShort: `clawdrip.com/pay/${giftId}`,
+      });
+
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Cache-Control', 'public, max-age=300');
+      return res.send(svg);
+    }
+
+    const qrPayload = `ethereum:${BASE_USDC_ADDRESS}@8453/transfer?address=${gift.wallet.address}&uint256=${Math.round(amount * 1e6)}`;
+    const png = await QRCode.toBuffer(qrPayload, {
+      type: 'png',
+      width: 900,
+      margin: 2,
+      color: {
+        dark: '#000000',
+        light: '#FFFFFF',
+      }
     });
 
-    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'public, max-age=300');
-    res.send(svg);
+    res.setHeader('X-Clawdrip-Pay-Url', payUrl);
+    res.send(png);
   } catch (err) {
     console.error('Gift share-image error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -477,9 +637,10 @@ router.get('/:giftId/share-image', async (req, res) => {
  */
 router.get('/:giftId/status', async (req, res) => {
   try {
+    const baseUrl = getBaseUrl(req);
     const { giftId } = req.params;
 
-    const gift = giftStore.get(giftId);
+    const gift = await loadGift(giftId);
     if (!gift) {
       return res.status(404).json({ error: 'Gift not found' });
     }
@@ -487,31 +648,45 @@ router.get('/:giftId/status', async (req, res) => {
     // Check if expired
     if (new Date(gift.expiresAt) < new Date() && gift.status === 'awaiting_funding') {
       gift.status = 'expired';
-      giftStore.set(giftId, gift);
+      await persistGift(gift);
     }
 
-    // In production: Check actual USDC balance on Base
-    // For now, simulate with manual trigger or actual balance check
     const walletAddress = gift.wallet.address;
     let balance = gift.fundingReceived || 0;
-
-    // TODO: Replace with actual balance check
-    // const provider = new ethers.JsonRpcProvider('https://mainnet.base.org');
-    // const usdcContract = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, provider);
-    // balance = await usdcContract.balanceOf(walletAddress);
+    let fundingUpdated = false;
+    try {
+      balance = await getUsdcBalance(walletAddress);
+      if (balance > (gift.fundingReceived || 0)) {
+        gift.fundingReceived = balance;
+        fundingUpdated = true;
+      }
+    } catch (chainErr) {
+      console.error('Gift on-chain balance check error:', chainErr.message);
+    }
 
     const amountNeeded = gift.pricing.amount;
     const funded = balance >= amountNeeded;
     const progress = Math.min(100, Math.round((balance / amountNeeded) * 100));
+
+    if (fundingUpdated) {
+      await persistGift(gift);
+    }
+
+    if (gift.status === 'awaiting_funding' && funded) {
+      gift.status = 'funded';
+      gift.fundedAt = gift.fundedAt || new Date().toISOString();
+      await persistGift(gift);
+      await triggerAutoPurchase(gift);
+    }
 
     // Build status response
     const response = {
       id: giftId,
       status: gift.status,
       agentName: gift.agentName,
-      payUrl: `https://clawdrip.com/pay/${giftId}`,
+      payUrl: `${baseUrl}/pay/${giftId}`,
       payUrlShort: `clawdrip.com/pay/${giftId}`,
-      shareImageUrl: `https://clawdrip.com/api/v1/gift/${giftId}/share-image`,
+      shareImageUrl: `${baseUrl}/api/v1/gift/${giftId}/share-image`,
 
       funding: {
         required: amountNeeded,
@@ -541,7 +716,13 @@ router.get('/:giftId/status', async (req, res) => {
       product: {
         name: gift.product.name,
         size: gift.size,
-        image: 'https://clawdrip.com/shirt.png',
+        image: gift.designUrl || gift.product.image || 'https://clawdrip.com/shirt.png',
+        design: gift.designId || gift.designUrl ? {
+          id: gift.designId || null,
+          url: gift.designUrl || null,
+          prompt: gift.designPrompt || null,
+          style: gift.designStyle || null,
+        } : null,
       }
     };
 
@@ -598,7 +779,7 @@ router.post('/:giftId/simulate-funding', async (req, res) => {
     const { giftId } = req.params;
     const { amount } = req.body;
 
-    const gift = giftStore.get(giftId);
+    const gift = await loadGift(giftId);
     if (!gift) {
       return res.status(404).json({ error: 'Gift not found' });
     }
@@ -614,7 +795,7 @@ router.post('/:giftId/simulate-funding', async (req, res) => {
       await triggerAutoPurchase(gift);
     }
 
-    giftStore.set(giftId, gift);
+    await persistGift(gift);
 
     res.json({
       success: true,
@@ -659,6 +840,7 @@ async function triggerAutoPurchase(gift) {
       console.error('Reservation failed:', reservationResult.error);
       gift.status = 'failed';
       gift.error = reservationResult.error;
+      await persistGift(gift);
       return;
     }
 
@@ -673,6 +855,7 @@ async function triggerAutoPurchase(gift) {
       console.error('Confirmation failed:', confirmResult.error);
       gift.status = 'failed';
       gift.error = confirmResult.error;
+      await persistGift(gift);
       return;
     }
 
@@ -684,8 +867,25 @@ async function triggerAutoPurchase(gift) {
         confirmResult.order.order_number,
         gift.designPrompt || gift.message
       );
+
+      if (gift.designUrl && clawd) {
+        await db.updateClawdDesign(clawd.id, gift.designUrl, {
+          prompt: gift.designPrompt || null,
+          style: gift.designStyle || null,
+          designId: gift.designId || null,
+          isCustom: !!gift.designId,
+        });
+      }
     } catch (clawdErr) {
       console.error('Clawd spawn failed:', clawdErr);
+    }
+
+    if (gift.designId) {
+      try {
+        await db.markDesignUsed(gift.designId, confirmResult.order.id);
+      } catch (designErr) {
+        console.error('Failed to mark gift design used:', designErr);
+      }
     }
 
     // Update gift status
@@ -697,11 +897,18 @@ async function triggerAutoPurchase(gift) {
       status: confirmResult.order.status,
       claimUrl: `/claim/${confirmResult.order.order_number}`,
       tankUrl: `/tank/${confirmResult.order.order_number}`,
+      design: gift.designId || gift.designUrl ? {
+        id: gift.designId || null,
+        url: gift.designUrl || null,
+        prompt: gift.designPrompt || null,
+        style: gift.designStyle || null,
+      } : null,
     };
     gift.clawd = clawd ? {
       id: clawd.id,
       name: clawd.name || 'Clawd',
     } : null;
+    await persistGift(gift);
 
     console.log(`Gift ${gift.id} purchased successfully: ${confirmResult.order.order_number}`);
 
@@ -729,6 +936,7 @@ async function triggerAutoPurchase(gift) {
     console.error('Auto-purchase error:', err);
     gift.status = 'failed';
     gift.error = err.message;
+    await persistGift(gift);
   }
 }
 

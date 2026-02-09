@@ -809,7 +809,7 @@ export default function ClawDrip() {
     const updated = { ...claimOrder, status: "claimed", shipping, size: selectedSize, claimed_at: new Date().toISOString(), claw_earned: clawEarned };
     await saveOrder(updated);
     setClaimOrder(updated);
-    // Award CLAWDRIP 💧 tokens
+    // Award CLAWDRIP Points
     const newBalance = clawBalance + clawEarned;
     await setClawBalance(newBalance);
     setClawBalanceState(newBalance);
@@ -2113,13 +2113,13 @@ export default function ClawDrip() {
                   Shipping to {shipping.city}, {shipping.state} · 24-48 hours
                 </p>
 
-                {/* CLAWDRIP 💧 Token Reward Callout */}
+                {/* CLAWDRIP Points Reward Callout */}
                 <div style={{ background: "linear-gradient(135deg, rgba(200,255,0,0.1) 0%, rgba(200,255,0,0.02) 100%)", border: "1px solid " + C.lime + "40", padding: "16px 20px", marginBottom: 16 }}>
                   <div style={{ fontFamily: F.d, fontWeight: 800, fontSize: 24, color: C.lime, marginBottom: 4, animation: "treasureRise 0.4s ease 0.8s forwards", opacity: 0 }}>
-                    +{claimOrder.claw_earned || 35} CLAWDRIP 💧 EARNED
+                    +{claimOrder.claw_earned || 35} CLAWDRIP POINTS EARNED
                   </div>
                   <div style={{ fontFamily: F.m, fontSize: 11, color: C.mt }}>
-                    Total balance: <span style={{ color: C.lime, fontWeight: 500 }}>{clawBalance} CLAWDRIP 💧</span>
+                    Total balance: <span style={{ color: C.lime, fontWeight: 500 }}>{clawBalance} CLAWDRIP POINTS</span>
                   </div>
                   {/* Progress to next tier */}
                   {tierInfo.nextTier && (
@@ -2155,7 +2155,7 @@ export default function ClawDrip() {
                     <span style={{ fontFamily: F.d, fontWeight: 700, fontSize: 14, color: C.lime }}>${priceInfo.price.toFixed(2)}</span>
                   </div>
                   <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", borderTop: "1px solid " + C.bdr, paddingTop: 8 }}>
-                    <span style={{ fontFamily: F.b, fontSize: 11, color: C.lime }}>+{claimOrder.claw_earned || 35} CLAWDRIP 💧 earned</span>
+                    <span style={{ fontFamily: F.b, fontSize: 11, color: C.lime }}>+{claimOrder.claw_earned || 35} CLAWDRIP Points earned</span>
                     <span style={{ fontFamily: F.m, fontSize: 11, color: C.mt }}>Balance: {clawBalance}</span>
                   </div>
                 </div>
@@ -2368,13 +2368,13 @@ export default function ClawDrip() {
                   Shipping to {shipping.city}, {shipping.state} · 5–7 business days
                 </p>
 
-                {/* CLAWDRIP 💧 Token Reward Callout */}
+                {/* CLAWDRIP Points Reward Callout */}
                 <div style={{ background: "linear-gradient(135deg, rgba(200,255,0,0.1) 0%, rgba(200,255,0,0.02) 100%)", border: "1px solid " + C.lime + "40", padding: "16px 20px", marginBottom: 16, animation: "scaleIn 0.4s ease 0.2s forwards", opacity: 0 }}>
                   <div style={{ fontFamily: F.d, fontWeight: 800, fontSize: 24, color: C.lime, marginBottom: 4 }}>
-                    +{claimOrder?.claw_earned || PRODUCT.price} CLAWDRIP 💧 EARNED
+                    +{claimOrder?.claw_earned || PRODUCT.price} CLAWDRIP POINTS EARNED
                   </div>
                   <div style={{ fontFamily: F.m, fontSize: 11, color: C.mt }}>
-                    Total balance: <span style={{ color: C.lime, fontWeight: 500 }}>{clawBalance} CLAWDRIP 💧</span>
+                    Total balance: <span style={{ color: C.lime, fontWeight: 500 }}>{clawBalance} CLAWDRIP POINTS</span>
                   </div>
                 </div>
 

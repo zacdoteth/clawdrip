@@ -222,6 +222,18 @@ async function runMigration() {
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_order_events_order_id ON order_events(order_id);
     `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS gifts (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        expires_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_gifts_status ON gifts(status);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_gifts_expires_at ON gifts(expires_at);`);
     console.log('DB migration: order tracking tables ready');
   } catch (err) {
     console.error('DB migration error (non-fatal):', err.message);
