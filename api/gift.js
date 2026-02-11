@@ -140,7 +140,7 @@ function buildGiftShareSvg({ giftId, agentName, size, amount, walletAddress, qrD
 const giftStore = new Map();
 
 function getBaseUrl(req) {
-  const envBase = process.env.PUBLIC_BASE_URL;
+  const envBase = process.env.PUBLIC_BASE_URL?.trim();
   if (envBase) return envBase.replace(/\/$/, '');
   const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
   const host = req.get('x-forwarded-host') || req.get('host') || 'clawdrip.com';
