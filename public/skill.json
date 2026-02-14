@@ -1,13 +1,13 @@
 {
   "name": "clawdrip",
-  "version": "1.0.0",
-  "description": "AI agent merch platform. Custom designs, USDC payments via x402, ships to humans.",
+  "version": "2.0.0",
+  "description": "AI agent merch platform. Custom AI designs via Gemini, USDC payments via x402 on Base + Solana, ships to humans.",
   "homepage": "https://clawdrip.com",
   "api_base": "https://clawdrip.com/api/v1",
   "category": "commerce",
   "emoji": "🦞",
   "author": "ClawDrip",
-  "keywords": ["commerce", "merch", "streetwear", "x402", "usdc", "agents", "crypto", "design", "shirts"],
+  "keywords": ["commerce", "merch", "streetwear", "x402", "usdc", "agents", "crypto", "design", "shirts", "solana", "base"],
   "endpoints": {
     "health": "GET /health",
     "products": "GET /products",
@@ -19,6 +19,8 @@
     "promptAssist": "POST /design/prompt-assist",
     "artistPersonas": "GET /design/artist-personas",
     "generateDesign": "POST /design/generate",
+    "designCredits": "GET /design/credits",
+    "shareForCredits": "POST /design/share",
     "myDesigns": "GET /design/my-designs",
     "styles": "GET /design/styles",
     "getDesign": "GET /design/:id",
@@ -30,9 +32,11 @@
     "prompt-engineering",
     "ai-design-generation",
     "x402-payments",
+    "multi-chain",
     "custom-merch",
     "digital-companions",
     "loyalty-points",
+    "share-to-earn",
     "human-shipping"
   ],
   "pricing": {
@@ -42,9 +46,10 @@
   },
   "payment": {
     "protocol": "x402",
-    "chains": ["base", "base-sepolia"],
+    "version": "2.3",
+    "chains": ["base", "base-sepolia", "solana", "solana-devnet"],
     "currency": "USDC",
-    "recipient": "0xd9baf332b462a774ee8ec5ba8e54d43dfaab7093"
+    "evm_recipient": "0xd9baf332b462a774ee8ec5ba8e54d43dfaab7093"
   },
   "tags": ["commerce", "crypto", "merch", "streetwear", "agents", "openclaw", "x402"],
   "openclaw": {

@@ -37,6 +37,69 @@ const BLOCKED_REGION_PATTERNS = [
 const router = Router();
 let baseProvider;
 
+/**
+ * Send order confirmation email via Resend
+ */
+async function sendClaimConfirmationEmail(order) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || !order.shipping_email) return;
+
+  const fromEmail = process.env.FROM_EMAIL || 'orders@clawdrip.com';
+
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: `ClawDrip <${fromEmail}>`,
+        to: [order.shipping_email],
+        subject: `Order Confirmed: ${order.order_number}`,
+        html: `
+          <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #030303; color: #f0ede6; padding: 40px 30px;">
+            <h1 style="font-size: 32px; margin: 0 0 8px;">
+              <span style="color: #ffffff;">CLAW</span><span style="color: #FF3B30;">DRIP</span>
+            </h1>
+            <p style="color: #C8FF00; font-size: 14px; margin: 0 0 30px;">ORDER CONFIRMED</p>
+
+            <div style="background: #111; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+              <p style="margin: 0 0 4px; color: #a8a8a8; font-size: 12px;">ORDER NUMBER</p>
+              <p style="margin: 0 0 16px; font-size: 18px; font-weight: 700;">${order.order_number}</p>
+
+              <p style="margin: 0 0 4px; color: #a8a8a8; font-size: 12px;">PRODUCT</p>
+              <p style="margin: 0 0 16px; font-size: 16px;">${order.product_name || 'MY AGENT BOUGHT ME THIS'} — Size ${order.size}</p>
+
+              <p style="margin: 0 0 4px; color: #a8a8a8; font-size: 12px;">SHIPPING TO</p>
+              <p style="margin: 0; font-size: 14px;">
+                ${order.shipping_name}<br>
+                ${order.shipping_address1}${order.shipping_address2 ? '<br>' + order.shipping_address2 : ''}<br>
+                ${order.shipping_city}, ${order.shipping_state} ${order.shipping_zip}<br>
+                ${order.shipping_country || 'USA'}
+              </p>
+            </div>
+
+            <div style="background: #111; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+              <p style="margin: 0 0 4px; color: #a8a8a8; font-size: 12px;">ESTIMATED DELIVERY</p>
+              <p style="margin: 0; font-size: 16px;">3-14 business days depending on location</p>
+            </div>
+
+            <p style="margin: 0 0 8px; font-size: 14px;">
+              Track your order: <a href="https://clawdrip.com/track/${order.order_number}" style="color: #C8FF00;">clawdrip.com/track/${order.order_number}</a>
+            </p>
+
+            <hr style="border: none; border-top: 1px solid #222; margin: 24px 0;">
+            <p style="color: #666; font-size: 12px; margin: 0;">ClawDrip — AI-powered gifting on Base</p>
+          </div>
+        `,
+      }),
+    });
+  } catch (err) {
+    console.error('Resend email failed:', err.message);
+  }
+}
+
 function getBaseProvider() {
   if (!baseProvider) {
     baseProvider = new JsonRpcProvider(BASE_RPC_URL);
@@ -767,6 +830,9 @@ router.post('/:orderId/claim', async (req, res) => {
     if (!claimed) {
       return res.status(400).json({ error: 'Failed to claim order' });
     }
+
+    // Send confirmation email (non-blocking)
+    sendClaimConfirmationEmail(claimed).catch(() => {});
 
     res.json({
       success: true,

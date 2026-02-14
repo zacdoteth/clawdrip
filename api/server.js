@@ -8,7 +8,10 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { paymentMiddleware } from 'x402-express';
+import { paymentMiddleware, x402ResourceServer } from '@x402/express';
+import { HTTPFacilitatorClient } from '@x402/core/server';
+import { ExactEvmScheme } from '@x402/evm/exact/server';
+import { ExactSvmScheme } from '@x402/svm/exact/server';
 import ordersRouter from './orders.js';
 import supplyRouter from './supply.js';
 import clawdsRouter from './clawds.js';
@@ -18,10 +21,16 @@ import adminRouter from './admin.js';
 import giftRouter from './gift.js';
 import db from '../lib/db.js';
 
-// x402 Configuration
+// x402 Configuration — supports Base (EVM) and Solana (SVM)
 const WALLET_ADDRESS = process.env.WALLET_ADDRESS || '0xd9baf332b462a774ee8ec5ba8e54d43dfaab7093';
-const X402_FACILITATOR = process.env.X402_FACILITATOR_URL || 'https://x402.org/facilitator';
-const NETWORK = process.env.X402_NETWORK || 'base'; // x402-express supports base/base-sepolia in this version
+const SOLANA_WALLET_ADDRESS = process.env.SOLANA_WALLET_ADDRESS || '';
+const X402_FACILITATOR = process.env.X402_FACILITATOR_URL || 'https://facilitator.x402.org';
+
+// Network identifiers (CAIP-2 format)
+const EVM_NETWORK = process.env.X402_NETWORK === 'base-sepolia' ? 'eip155:84532' : 'eip155:8453';
+const SVM_NETWORK = process.env.X402_SVM_NETWORK === 'solana-devnet'
+  ? 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
+  : 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -106,35 +115,44 @@ app.get('/skill.json', (req, res) => {
   }
 });
 
-// x402 Payment Middleware for orders that require payment
-// This intercepts requests and verifies payment headers
+// x402 Payment Middleware — Base (EVM) + Solana (SVM)
+// Build accepts arrays per route: EVM always included, Solana if wallet configured
+function buildAccepts(price) {
+  const accepts = [
+    { scheme: 'exact', price, network: EVM_NETWORK, payTo: WALLET_ADDRESS, maxTimeoutSeconds: 300 }
+  ];
+  if (SOLANA_WALLET_ADDRESS) {
+    accepts.push({ scheme: 'exact', price, network: SVM_NETWORK, payTo: SOLANA_WALLET_ADDRESS, maxTimeoutSeconds: 300 });
+  }
+  return accepts;
+}
+
 const x402Routes = {
-  // Protect the actual checkout creation route used by the frontend/API.
   'POST /api/v1/orders': {
-    price: '$35',  // Base price in USD
-    network: NETWORK,
-    config: {
-      description: 'ClawDrip Launch Tee - MY AGENT BOUGHT ME THIS',
-      mimeType: 'application/json',
-      maxTimeoutSeconds: 300,  // 5 minute payment window
-    }
+    accepts: buildAccepts('$35'),
+    description: 'ClawDrip Launch Tee - MY AGENT BOUGHT ME THIS',
   },
   'POST /api/v1/design/generate': {
-    price: '$1',  // $1 USDC for design generation
-    network: NETWORK,
-    config: {
-      description: 'ClawDrip Custom Design Generation - 3 variations',
-      mimeType: 'application/json',
-      maxTimeoutSeconds: 120,  // 2 minute payment window
-    }
+    accepts: buildAccepts('$1'),
+    description: 'ClawDrip Custom Design Generation - 3 variations',
   }
 };
 
 // Apply x402 middleware only if configured
 if (WALLET_ADDRESS && WALLET_ADDRESS !== '0x...') {
   try {
-    app.use(paymentMiddleware(WALLET_ADDRESS, x402Routes, X402_FACILITATOR));
-    console.log('x402 payment middleware enabled');
+    const facilitatorClient = new HTTPFacilitatorClient({ url: X402_FACILITATOR });
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register(EVM_NETWORK, new ExactEvmScheme());
+
+    // Register Solana if wallet is configured
+    if (SOLANA_WALLET_ADDRESS) {
+      resourceServer.register(SVM_NETWORK, new ExactSvmScheme());
+      console.log(`x402: Solana enabled (${SVM_NETWORK})`);
+    }
+
+    app.use(paymentMiddleware(x402Routes, resourceServer));
+    console.log(`x402 payment middleware enabled (EVM: ${EVM_NETWORK})`);
   } catch (err) {
     console.warn('x402 middleware setup skipped:', err.message);
   }
@@ -228,13 +246,44 @@ async function runMigration() {
         data JSONB NOT NULL,
         status VARCHAR(50) NOT NULL,
         expires_at TIMESTAMPTZ,
+        wallet_private_key_encrypted TEXT,
+        sweep_tx_hash TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await db.query(`ALTER TABLE gifts ADD COLUMN IF NOT EXISTS wallet_private_key_encrypted TEXT;`);
+    await db.query(`ALTER TABLE gifts ADD COLUMN IF NOT EXISTS sweep_tx_hash TEXT;`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_gifts_status ON gifts(status);`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_gifts_expires_at ON gifts(expires_at);`);
-    console.log('DB migration: order tracking tables ready');
+    // Design credits + social shares for share-to-earn
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS design_credits (
+        wallet_address VARCHAR(255) PRIMARY KEY,
+        credits INTEGER NOT NULL DEFAULT 1,
+        total_earned INTEGER NOT NULL DEFAULT 1,
+        total_spent INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT non_negative_credits CHECK (credits >= 0)
+      );
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS social_shares (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        wallet_address VARCHAR(255) NOT NULL,
+        design_id UUID REFERENCES designs(id),
+        share_url TEXT NOT NULL,
+        platform VARCHAR(50),
+        status VARCHAR(20) DEFAULT 'pending',
+        credits_awarded INTEGER DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        verified_at TIMESTAMPTZ,
+        CONSTRAINT valid_share_status CHECK (status IN ('pending', 'approved', 'rejected'))
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_social_shares_wallet ON social_shares(wallet_address);`);
+    console.log('DB migration: all tables ready');
   } catch (err) {
     console.error('DB migration error (non-fatal):', err.message);
   }
@@ -251,6 +300,7 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   ║                                                           ║
   ║   Port: ${PORT}                                              ║
   ║   Env:  ${process.env.NODE_ENV || 'development'}                                    ║
+  ║   Chains: Base (EVM)${SOLANA_WALLET_ADDRESS ? ' + Solana (SVM)' : ''}                           ║
   ║                                                           ║
   ║   Agent Discovery:                                        ║
   ║   - GET  /skills.md              OpenClaw skill manifest   ║

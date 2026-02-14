@@ -7,14 +7,15 @@
  */
 
 import { Router } from 'express';
+import { GoogleGenAI } from '@google/genai';
 import db from '../lib/db.js';
 
 const router = Router();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_VISION_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
-const BLOCKRUN_API_KEY = process.env.BLOCKRUN_API_KEY;
-const BLOCKRUN_API = 'https://api.blockrun.ai/v1/generate';
+
+// Initialize Gemini client for image generation (Nano Banana)
+const genai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 // Design style guidelines for ClawDrip brand
 const DESIGN_STYLE_GUIDE = `
@@ -297,7 +298,7 @@ function buildNanoBananaPrompt(prompt, style = 'streetwear', colors = null) {
  * Generate a design concept description using AI
  */
 async function generateDesignConcept(prompt, style = 'streetwear') {
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
+  if (!genai) {
     return {
       success: false,
       error: 'Gemini API key not configured',
@@ -320,34 +321,16 @@ Given a design prompt, generate a detailed visual concept description that could
 
 Keep the description concise but detailed enough for an artist or AI image generator to execute.`;
 
-    const response = await fetch(`${GEMINI_VISION_ENDPOINT}?key=${GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: systemPrompt },
-            { text: `Design prompt: "${prompt}"\nStyle preference: ${style}\n\nGenerate the design concept:` }
-          ]
-        }],
-        generationConfig: {
-          temperature: 0.8,
-          maxOutputTokens: 500
-        }
-      })
+    const response = await genai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `${systemPrompt}\n\nDesign prompt: "${prompt}"\nStyle preference: ${style}\n\nGenerate the design concept:`,
+      config: {
+        temperature: 0.8,
+        maxOutputTokens: 500
+      }
     });
 
-    if (!response.ok) {
-      console.error('Gemini API error:', response.status);
-      return {
-        success: false,
-        error: 'AI generation failed',
-        fallbackConcept: generateFallbackConcept(prompt)
-      };
-    }
-
-    const data = await response.json();
-    const concept = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const concept = response.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!concept) {
       return {
@@ -410,41 +393,79 @@ Note: This is a fallback concept. Configure Gemini API for AI-generated concepts
 }
 
 /**
- * Generate design images via BlockRun API (placeholder for actual integration)
+ * Generate design images using Gemini 2.5 Flash Image (Nano Banana)
+ * Returns base64 data URLs for each variation.
  */
 async function generateDesignImages(nanoPrompt, variations = 3) {
-  // If BlockRun API is configured, use it
-  if (BLOCKRUN_API_KEY) {
-    try {
-      const response = await fetch(BLOCKRUN_API, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${BLOCKRUN_API_KEY}`
-        },
-        body: JSON.stringify({
-          prompt: nanoPrompt,
-          variations: variations,
-          format: 'png',
-          size: '1024x1280'
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          success: true,
-          images: data.images || data.results || []
-        };
-      }
-    } catch (err) {
-      console.error('BlockRun API error:', err);
-    }
+  if (!genai) {
+    console.warn('Gemini not configured — returning placeholder designs');
+    return generatePlaceholderImages(nanoPrompt, variations);
   }
 
-  // Fallback: return placeholder images for development
-  // Uses placehold.co with style-based colors
-  const timestamp = Date.now();
+  const style = nanoPrompt?.subject?.style_modifier || 'streetwear';
+  const description = nanoPrompt?.subject?.description || 'Custom ClawDrip design';
+  const palette = nanoPrompt?.design_specs?.color_palette || STYLE_PALETTES[style] || STYLE_PALETTES.streetwear;
+
+  const basePrompt = `Create a bold t-shirt graphic design for the brand "ClawDrip".
+
+Design: ${description}
+Style: ${style} — ${nanoPrompt?.style_references?.era || 'modern streetwear'}
+Color palette: ${palette.join(', ')}
+Requirements:
+- Print-ready graphic, clean edges
+- ${nanoPrompt?.design_specs?.style || 'Bold vector illustration'}
+- Subtle lobster/claw motif incorporated
+- No background (transparent or solid white for extraction)
+- Suitable for DTG (direct-to-garment) printing
+- 10"x12" print area, centered composition
+
+${nanoPrompt?.character_reference ? `Character: ${nanoPrompt.character_reference.attitude}` : ''}`;
+
+  const images = [];
+
+  // Generate variations in parallel
+  const promises = Array.from({ length: variations }, async (_, i) => {
+    const variationPrompt = i === 0
+      ? basePrompt
+      : `${basePrompt}\n\nThis is variation ${i + 1} — explore a different composition or color emphasis while keeping the same concept.`;
+
+    try {
+      const response = await genai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: variationPrompt,
+        config: {
+          responseModalities: ['IMAGE'],
+          imageConfig: { aspectRatio: '4:5' }
+        }
+      });
+
+      const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+      if (imagePart) {
+        const dataUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+        return { url: dataUrl, thumbnail: dataUrl };
+      }
+      return null;
+    } catch (err) {
+      console.error(`Design variation ${i + 1} failed:`, err.message);
+      return null;
+    }
+  });
+
+  const results = await Promise.all(promises);
+  const successfulImages = results.filter(Boolean);
+
+  if (successfulImages.length === 0) {
+    console.warn('All Gemini image generations failed — falling back to placeholders');
+    return generatePlaceholderImages(nanoPrompt, variations);
+  }
+
+  return { success: true, images: successfulImages, isPlaceholder: false };
+}
+
+/**
+ * Fallback placeholder images when Gemini is not available
+ */
+function generatePlaceholderImages(nanoPrompt, variations = 3) {
   const styleColors = {
     streetwear: ['FF3B30', 'C8FF00'],
     minimal: ['000000', 'FFFFFF'],
@@ -462,7 +483,7 @@ async function generateDesignImages(nanoPrompt, variations = 3) {
       const bgColor = colors[i % colors.length];
       const textColor = bgColor === 'FFFFFF' || bgColor === 'C8FF00' || bgColor === 'F7C59F' ? '000000' : 'FFFFFF';
       return {
-        url: `https://placehold.co/800x1000/${bgColor}/${textColor}?text=Design+V${i + 1}%0A${encodeURIComponent(nanoPrompt?.subject?.description?.substring(0, 30) || 'Custom')}`,
+        url: `https://placehold.co/800x1000/${bgColor}/${textColor}?text=Design+V${i + 1}`,
         thumbnail: `https://placehold.co/400x500/${bgColor}/${textColor}?text=V${i + 1}`
       };
     }),
@@ -644,7 +665,7 @@ router.post('/generate', async (req, res) => {
   try {
     const { prompt, style = 'streetwear', colors } = req.body;
     const walletAddress = req.headers['x-wallet-address'];
-    const paymentHash = req.headers['x-payment'] || 'x402-verified';
+    const paymentHash = req.headers['x-payment'] || req.headers['payment-signature'] || 'x402-verified';
 
     // Validate prompt
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
@@ -680,6 +701,19 @@ router.post('/generate', async (req, res) => {
       }
     }
 
+    // Check design credits (1 free per wallet, earn more by sharing)
+    if (walletAddress) {
+      const credits = await db.getDesignCredits(walletAddress);
+      if (credits.credits <= 0) {
+        return res.status(403).json({
+          error: 'No design credits remaining',
+          message: 'Share a design on social media to earn more credits!',
+          creditsBalance: 0,
+          earnCreditsEndpoint: 'POST /api/v1/design/share'
+        });
+      }
+    }
+
     // Build Nano Banana structured prompt
     const nanoPrompt = buildNanoBananaPrompt(
       prompt.trim(),
@@ -687,7 +721,7 @@ router.post('/generate', async (req, res) => {
       colors
     );
 
-    // Generate design images
+    // Generate design images via Gemini
     const imageResult = await generateDesignImages(nanoPrompt, 3);
 
     if (!imageResult.success || !imageResult.images?.length) {
@@ -695,6 +729,11 @@ router.post('/generate', async (req, res) => {
         error: 'Design generation failed',
         message: 'Unable to generate design images. Please try again.'
       });
+    }
+
+    // Deduct a design credit
+    if (walletAddress) {
+      await db.spendDesignCredit(walletAddress);
     }
 
     // Save designs to database
@@ -709,6 +748,11 @@ router.post('/generate', async (req, res) => {
         nanoPrompt
       }
     );
+
+    // Get remaining credits
+    const remainingCredits = walletAddress
+      ? (await db.getDesignCredits(walletAddress)).credits
+      : null;
 
     // Format response
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -727,8 +771,9 @@ router.post('/generate', async (req, res) => {
       expiresAt: expiresAt.toISOString(),
       canOrderUntil: expiresAt.toISOString(),
       isPlaceholder: imageResult.isPlaceholder || false,
+      creditsRemaining: remainingCredits,
       message: imageResult.isPlaceholder
-        ? 'Placeholder designs generated. Configure BlockRun API for real AI designs.'
+        ? 'Placeholder designs generated. Configure GEMINI_API_KEY for real AI designs.'
         : 'Your custom designs are ready! Pick your favorite and order a shirt.'
     });
 
@@ -830,6 +875,105 @@ router.get('/styles', (req, res) => {
     brandGuidelines: DESIGN_STYLE_GUIDE,
     nanoBananaPromptExample: buildNanoBananaPrompt('lobster fighting a bear', 'chaos')
   });
+});
+
+/**
+ * GET /api/v1/design/credits
+ * Get design credit balance for a wallet
+ */
+router.get('/credits', async (req, res) => {
+  try {
+    const walletAddress = req.headers['x-wallet-address'];
+    if (!walletAddress) {
+      return res.status(400).json({ error: 'Wallet address required (X-Wallet-Address header)' });
+    }
+
+    const credits = await db.getDesignCredits(walletAddress);
+    res.json({
+      walletAddress,
+      credits: credits.credits,
+      totalEarned: credits.total_earned,
+      totalSpent: credits.total_spent,
+      earnMore: {
+        method: 'Share a design on social media',
+        endpoint: 'POST /api/v1/design/share',
+        creditsPerShare: 1
+      }
+    });
+  } catch (err) {
+    console.error('Credits lookup error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/v1/design/share
+ * Submit a social media share link to earn design credits.
+ * 1 credit per approved share. Auto-approved for MVP.
+ */
+router.post('/share', async (req, res) => {
+  try {
+    const { shareUrl, designId } = req.body;
+    const walletAddress = req.headers['x-wallet-address'];
+
+    if (!walletAddress) {
+      return res.status(400).json({ error: 'Wallet address required (X-Wallet-Address header)' });
+    }
+
+    if (!shareUrl || typeof shareUrl !== 'string') {
+      return res.status(400).json({
+        error: 'Share URL required',
+        example: { shareUrl: 'https://x.com/user/status/123', designId: 'optional-uuid' }
+      });
+    }
+
+    // Basic URL validation
+    try { new URL(shareUrl); } catch {
+      return res.status(400).json({ error: 'Invalid URL format' });
+    }
+
+    // Check for duplicate share submissions
+    const existingShare = await db.query(
+      'SELECT id FROM social_shares WHERE wallet_address = $1 AND share_url = $2',
+      [walletAddress, shareUrl]
+    );
+    if (existingShare.rows.length > 0) {
+      return res.status(409).json({ error: 'This share URL has already been submitted' });
+    }
+
+    // Detect platform from URL
+    let platform = 'other';
+    if (shareUrl.includes('x.com') || shareUrl.includes('twitter.com')) platform = 'twitter';
+    else if (shareUrl.includes('instagram.com')) platform = 'instagram';
+    else if (shareUrl.includes('tiktok.com')) platform = 'tiktok';
+    else if (shareUrl.includes('warpcast.com') || shareUrl.includes('farcaster')) platform = 'farcaster';
+    else if (shareUrl.includes('lens.')) platform = 'lens';
+
+    // Auto-approve for MVP (manual review later)
+    const creditsAwarded = 1;
+    await db.query(
+      `INSERT INTO social_shares (wallet_address, design_id, share_url, platform, status, credits_awarded, verified_at)
+       VALUES ($1, $2, $3, $4, 'approved', $5, NOW())`,
+      [walletAddress, designId || null, shareUrl, platform, creditsAwarded]
+    );
+
+    // Award credit
+    await db.addDesignCredits(walletAddress, creditsAwarded);
+
+    const credits = await db.getDesignCredits(walletAddress);
+
+    res.status(201).json({
+      success: true,
+      message: `+${creditsAwarded} design credit earned! Share more to earn more.`,
+      creditsAwarded,
+      creditsBalance: credits.credits,
+      platform
+    });
+
+  } catch (err) {
+    console.error('Share submission error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 /**

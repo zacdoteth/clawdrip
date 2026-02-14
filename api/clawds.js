@@ -14,7 +14,7 @@ const router = Router();
 
 // Gemini API for chat (fallback to simple responses if not configured)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 // Personality prompts for different modes
 const PERSONALITY_PROMPTS = {

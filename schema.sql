@@ -556,6 +556,45 @@ CREATE INDEX idx_designs_expires ON designs(expires_at) WHERE used_in_order_id I
 CREATE INDEX idx_designs_generation ON designs(generation_id);
 
 -- ============================================================================
+-- DESIGN CREDITS: Share-to-earn system
+-- ============================================================================
+-- Each wallet gets 1 free design credit. Earn more by sharing designs on social media.
+
+CREATE TABLE design_credits (
+  wallet_address VARCHAR(255) PRIMARY KEY,
+  credits INTEGER NOT NULL DEFAULT 1,
+  total_earned INTEGER NOT NULL DEFAULT 1,
+  total_spent INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT non_negative_credits CHECK (credits >= 0)
+);
+
+CREATE TRIGGER design_credits_updated_at
+  BEFORE UPDATE ON design_credits
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================================================
+-- SOCIAL SHARES: Track social media shares for credit awards
+-- ============================================================================
+
+CREATE TABLE social_shares (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  wallet_address VARCHAR(255) NOT NULL,
+  design_id UUID REFERENCES designs(id),
+  share_url TEXT NOT NULL,
+  platform VARCHAR(50),  -- twitter, instagram, tiktok, farcaster, lens, other
+  status VARCHAR(20) DEFAULT 'pending',  -- pending, approved, rejected
+  credits_awarded INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  verified_at TIMESTAMPTZ,
+  CONSTRAINT valid_share_status CHECK (status IN ('pending', 'approved', 'rejected'))
+);
+
+CREATE INDEX idx_social_shares_wallet ON social_shares(wallet_address);
+CREATE INDEX idx_social_shares_status ON social_shares(status);
+
+-- ============================================================================
 -- FUNCTION: Spawn clawd when order is confirmed
 -- ============================================================================
 

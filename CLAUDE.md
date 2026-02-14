@@ -10,8 +10,8 @@ Live: https://clawdrip.com
 - 3D: React Three Fiber + Three.js + Drei
 - Backend: Express (Vercel serverless)
 - DB: PostgreSQL (Supabase)
-- Payments: x402 + USDC on Base
-- AI: Gemini 2.0 Flash
+- Payments: x402 v2.3 + USDC on Base (EVM) and Solana (SVM)
+- AI: Gemini 2.5 Flash (text) + Gemini 2.5 Flash Image (design gen)
 
 ## File Map
 - `src/App.jsx` landing/shop/admin/claim flow
@@ -38,7 +38,7 @@ Live: https://clawdrip.com
 2. Agent asks size first (`S/M/L/XL/2XL`).
 3. `POST /api/v1/gift/create` returns pay URL + wallet + QR/share image URL.
 4. Agent sends pay URL + attached payment image.
-5. Human pays $35 USDC on Base.
+5. Human pays $35 USDC on Base or Solana.
 6. Agent polls `GET /api/v1/gift/:giftId/status` until purchased.
 7. Agent sends claim URL.
 8. Human submits shipping via claim flow.
@@ -62,13 +62,19 @@ Keep API/static rewrites before SPA catch-all. Missing catch-all breaks direct l
 - Keep ask simple: size -> pay link -> address fallback.
 
 ## Known Limitations
-- `giftStore` is in-memory in `api/gift.js` (non-persistent on cold start).
-- Current installed payment package is `x402-express` (legacy package).
-- Gift funding detection currently still requires chain verification hardening for full production trustlessness.
+- `giftStore` is in-memory in `api/gift.js` (cache layer; DB is source of truth on cold start).
+- Payment via `@x402/express` v2.3 with `@x402/evm` (Base) and `@x402/svm` (Solana). CAIP-2 network IDs.
+- Gift wallet private keys are encrypted with AES-256-GCM and stored in DB. Requires `GIFT_WALLET_ENCRYPTION_KEY` env var.
+- USDC is swept from gift wallets to the main wallet immediately on funding detection, making payment irreversible.
+- Rate limiting on gift creation: 10/IP/hour, 50/IP/day.
+- Claim confirmation emails require `RESEND_API_KEY` and `FROM_EMAIL` env vars.
+- Agent gets order updates by polling `GET /api/v1/gift/:giftId/status` and `GET /api/v1/orders/:orderNumber/tracking`.
+- Design generation uses Gemini 2.5 Flash Image (`gemini-2.5-flash-image`). Requires `GEMINI_API_KEY`.
+- Design credits: 1 free per wallet, earn more by sharing designs on social media (`POST /api/v1/design/share`).
 
 ## Product Constants
 - Product: `MY AGENT BOUGHT ME THIS`
-- Price: `$35 USDC` on Base
+- Price: `$35 USDC` on Base or Solana
 - Sizes: `S, M, L, XL, 2XL`
 - Shipping: worldwide with OFAC restrictions
 

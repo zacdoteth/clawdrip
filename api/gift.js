@@ -14,6 +14,8 @@
 
 import { Router } from 'express';
 import { Wallet, Contract, JsonRpcProvider } from 'ethers';
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import rateLimit from 'express-rate-limit';
 import QRCode from 'qrcode';
 import db from '../lib/db.js';
 
@@ -59,7 +61,76 @@ const SHIPPING_ESTIMATES = {
 
 const BASE_USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
-const USDC_ABI = ['function balanceOf(address account) view returns (uint256)'];
+const MAIN_WALLET_ADDRESS = process.env.WALLET_ADDRESS || '0xd9baf332b462a774ee8ec5ba8e54d43dfaab7093';
+const USDC_ABI = [
+  'function balanceOf(address account) view returns (uint256)',
+  'function transfer(address to, uint256 amount) returns (bool)',
+];
+
+// ============================================================================
+// WALLET KEY ENCRYPTION (AES-256-GCM)
+// ============================================================================
+
+function getEncryptionKey() {
+  const hex = process.env.GIFT_WALLET_ENCRYPTION_KEY;
+  if (!hex || hex.length !== 64) {
+    throw new Error('GIFT_WALLET_ENCRYPTION_KEY must be a 32-byte hex string (64 chars)');
+  }
+  return Buffer.from(hex, 'hex');
+}
+
+function encryptPrivateKey(privateKey) {
+  const key = getEncryptionKey();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(privateKey, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  // Format: iv:authTag:ciphertext (all hex)
+  return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted.toString('hex')}`;
+}
+
+function decryptPrivateKey(encryptedStr) {
+  const key = getEncryptionKey();
+  const [ivHex, authTagHex, ciphertextHex] = encryptedStr.split(':');
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
+  decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
+  return decipher.update(ciphertextHex, 'hex', 'utf8') + decipher.final('utf8');
+}
+
+function createSignerFromEncryptedKey(encryptedKey) {
+  const privateKey = decryptPrivateKey(encryptedKey);
+  return new Wallet(privateKey, getBaseProvider());
+}
+
+// ============================================================================
+// USDC SWEEP
+// ============================================================================
+
+async function sweepUsdcToMainWallet(gift) {
+  if (!gift.walletPrivateKeyEncrypted) {
+    console.error(`Gift ${gift.id}: No encrypted private key, cannot sweep`);
+    return null;
+  }
+
+  try {
+    const signer = createSignerFromEncryptedKey(gift.walletPrivateKeyEncrypted);
+    const usdc = new Contract(BASE_USDC_ADDRESS, USDC_ABI, signer);
+    const balance = await usdc.balanceOf(gift.wallet.address);
+
+    if (balance === 0n) {
+      console.warn(`Gift ${gift.id}: Zero USDC balance, nothing to sweep`);
+      return null;
+    }
+
+    const tx = await usdc.transfer(MAIN_WALLET_ADDRESS, balance);
+    const receipt = await tx.wait();
+    console.log(`Gift ${gift.id}: Swept ${Number(balance) / 1_000_000} USDC → ${MAIN_WALLET_ADDRESS} (tx: ${receipt.hash})`);
+    return receipt.hash;
+  } catch (err) {
+    console.error(`Gift ${gift.id}: Sweep failed:`, err.message);
+    return null;
+  }
+}
 let giftDbReady = null;
 let giftDbUnavailableLogged = false;
 let baseProvider;
@@ -157,10 +228,14 @@ async function ensureGiftStorage() {
         data JSONB NOT NULL,
         status VARCHAR(50) NOT NULL,
         expires_at TIMESTAMPTZ,
+        wallet_private_key_encrypted TEXT,
+        sweep_tx_hash TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await db.query(`ALTER TABLE gifts ADD COLUMN IF NOT EXISTS wallet_private_key_encrypted TEXT;`);
+    await db.query(`ALTER TABLE gifts ADD COLUMN IF NOT EXISTS sweep_tx_hash TEXT;`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_gifts_status ON gifts(status);`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_gifts_expires_at ON gifts(expires_at);`);
     giftDbReady = true;
@@ -182,15 +257,19 @@ async function persistGift(gift) {
   if (!storageReady) return;
 
   try {
+    // Strip sensitive fields from JSONB data — stored in dedicated columns only
+    const { walletPrivateKeyEncrypted, sweepTxHash, ...safeData } = gift;
     await db.query(
-      `INSERT INTO gifts (id, data, status, expires_at, updated_at)
-       VALUES ($1, $2::jsonb, $3, $4, NOW())
+      `INSERT INTO gifts (id, data, status, expires_at, wallet_private_key_encrypted, sweep_tx_hash, updated_at)
+       VALUES ($1, $2::jsonb, $3, $4, $5, $6, NOW())
        ON CONFLICT (id) DO UPDATE
        SET data = EXCLUDED.data,
            status = EXCLUDED.status,
            expires_at = EXCLUDED.expires_at,
+           wallet_private_key_encrypted = COALESCE(EXCLUDED.wallet_private_key_encrypted, gifts.wallet_private_key_encrypted),
+           sweep_tx_hash = COALESCE(EXCLUDED.sweep_tx_hash, gifts.sweep_tx_hash),
            updated_at = NOW()`,
-      [gift.id, JSON.stringify(gift), gift.status, gift.expiresAt || null]
+      [gift.id, JSON.stringify(safeData), gift.status, gift.expiresAt || null, gift.walletPrivateKeyEncrypted || null, gift.sweepTxHash || null]
     );
   } catch (err) {
     if (!giftDbUnavailableLogged) {
@@ -208,11 +287,18 @@ async function loadGift(giftId) {
   if (!storageReady) return null;
 
   try {
-    const result = await db.query(`SELECT data FROM gifts WHERE id = $1 LIMIT 1`, [giftId]);
+    const result = await db.query(`SELECT data, wallet_private_key_encrypted, sweep_tx_hash FROM gifts WHERE id = $1 LIMIT 1`, [giftId]);
     const row = result.rows[0];
     if (!row?.data) return null;
-    giftStore.set(giftId, row.data);
-    return row.data;
+    const gift = row.data;
+    if (row.wallet_private_key_encrypted) {
+      gift.walletPrivateKeyEncrypted = row.wallet_private_key_encrypted;
+    }
+    if (row.sweep_tx_hash) {
+      gift.sweepTxHash = row.sweep_tx_hash;
+    }
+    giftStore.set(giftId, gift);
+    return gift;
   } catch (err) {
     return null;
   }
@@ -323,6 +409,23 @@ router.get('/shipping/countries', (req, res) => {
 // GIFT FLOW
 // ============================================================================
 
+// Rate limiting: 10 gifts per IP per hour, 50 per day
+const giftCreateHourlyLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many gift requests. Try again later.', retryAfter: '1 hour' },
+});
+
+const giftCreateDailyLimit = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Daily gift limit reached. Try again tomorrow.', retryAfter: '24 hours' },
+});
+
 /**
  * POST /api/v1/gift/create
  *
@@ -335,7 +438,7 @@ router.get('/shipping/countries', (req, res) => {
  * - commitmentHook: They've already seen the design, invested emotionally
  * - lossAversion: "Don't let this design go unclaimed"
  */
-router.post('/create', async (req, res) => {
+router.post('/create', giftCreateDailyLimit, giftCreateHourlyLimit, async (req, res) => {
   try {
     const baseUrl = getBaseUrl(req);
     const {
@@ -404,6 +507,15 @@ router.post('/create', async (req, res) => {
     const wallet = Wallet.createRandom();
     const walletAddress = wallet.address;
 
+    // Encrypt private key for later sweep
+    let encryptedPrivateKey = null;
+    try {
+      encryptedPrivateKey = encryptPrivateKey(wallet.privateKey);
+    } catch (err) {
+      console.error('Failed to encrypt wallet private key:', err.message);
+      // Continue without encryption — logged as critical
+    }
+
     // Generate gift ID first (needed for QR URL)
     const giftId = `gift_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
 
@@ -434,6 +546,7 @@ router.post('/create', async (req, res) => {
       designStyle: resolvedDesignStyle,
       message,
       webhookUrl,
+      walletPrivateKeyEncrypted: encryptedPrivateKey,
       wallet: {
         address: walletAddress,
         qrCodeDataUrl,
@@ -675,6 +788,13 @@ router.get('/:giftId/status', async (req, res) => {
     if (gift.status === 'awaiting_funding' && funded) {
       gift.status = 'funded';
       gift.fundedAt = gift.fundedAt || new Date().toISOString();
+
+      // Immediately sweep USDC to main wallet to make funding irreversible
+      const sweepTxHash = await sweepUsdcToMainWallet(gift);
+      if (sweepTxHash) {
+        gift.sweepTxHash = sweepTxHash;
+      }
+
       await persistGift(gift);
       await triggerAutoPurchase(gift);
     }
@@ -912,7 +1032,7 @@ async function triggerAutoPurchase(gift) {
 
     console.log(`Gift ${gift.id} purchased successfully: ${confirmResult.order.order_number}`);
 
-    // TODO: Send webhook if configured
+    // Send agent webhook if configured
     if (gift.webhookUrl) {
       try {
         await fetch(gift.webhookUrl, {
