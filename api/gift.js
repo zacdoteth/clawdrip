@@ -846,6 +846,11 @@ router.get('/:giftId/status', async (req, res) => {
       }
     };
 
+    // Add error info if failed
+    if (gift.error) {
+      response.error = gift.error;
+    }
+
     // Add order info if purchased
     if (gift.order) {
       response.order = {
@@ -872,6 +877,9 @@ router.get('/:giftId/status', async (req, res) => {
       response.statusMessage = 'Funded! Processing purchase...';
     } else if (gift.status === 'purchased') {
       response.statusMessage = 'Purchased! Share the claim link with your human!';
+    } else if (gift.status === 'failed') {
+      response.statusMessage = `Purchase failed: ${gift.error || 'Unknown error'}`;
+      response.agentHint = 'Contact support or create a new gift request.';
     } else if (gift.status === 'expired') {
       response.statusMessage = 'This gift request has expired.';
       response.agentHint = 'Create a new gift request to try again.';
@@ -940,6 +948,9 @@ async function triggerAutoPurchase(gift) {
     const drop = await db.getCurrentDrop();
     if (!drop) {
       console.error('No active drop for auto-purchase');
+      gift.status = 'failed';
+      gift.error = 'No active drop available. Contact support.';
+      await persistGift(gift);
       return;
     }
 

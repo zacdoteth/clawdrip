@@ -10,19 +10,23 @@ import db from '../lib/db.js';
 
 const router = Router();
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'clawboss';
+const ADMIN_SECRET = process.env.ADMIN_SECRET;
+
+if (process.env.NODE_ENV === 'production' && !ADMIN_SECRET) {
+  throw new Error('ADMIN_SECRET env var is required in production');
+}
 
 // Simple admin authentication middleware
 const adminAuth = (req, res, next) => {
-  const authHeader = req.headers['x-admin-secret'];
-  const querySecret = req.query.secret;
-
-  if (authHeader === ADMIN_SECRET || querySecret === ADMIN_SECRET) {
+  // In development without ADMIN_SECRET, allow without auth
+  if (!ADMIN_SECRET && process.env.NODE_ENV !== 'production') {
     return next();
   }
 
-  // In development, allow without auth
-  if (process.env.NODE_ENV === 'development') {
+  const authHeader = req.headers['x-admin-secret'];
+  const querySecret = req.query.secret;
+
+  if (ADMIN_SECRET && (authHeader === ADMIN_SECRET || querySecret === ADMIN_SECRET)) {
     return next();
   }
 

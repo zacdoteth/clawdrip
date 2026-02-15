@@ -607,9 +607,7 @@ router.post('/:reservationId/confirm', async (req, res) => {
       });
     }
 
-    const requireStrictVerification = process.env.NODE_ENV === 'production' &&
-      process.env.ALLOW_UNVERIFIED_PAYMENT !== 'true';
-    if (requireStrictVerification) {
+    if (process.env.NODE_ENV === 'production') {
       const verification = await verifyUsdcPaymentOnBase({
         paymentHash,
         requiredAmountUSDC: reservation.price_cents / 100,

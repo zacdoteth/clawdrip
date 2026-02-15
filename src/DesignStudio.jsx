@@ -439,7 +439,7 @@ export default function DesignStudio() {
                     position: 'relative'
                   }}>
                     <img
-                      src={design.url?.startsWith('http') ? design.url : getPlaceholderImage(design)}
+                      src={design.url?.startsWith('http') || design.url?.startsWith('data:') ? design.url : getPlaceholderImage(design)}
                       alt={`Design variation ${design.variation}`}
                       style={{
                         maxWidth: '100%',
@@ -518,7 +518,7 @@ export default function DesignStudio() {
                     justifyContent: 'center'
                   }}>
                     <img
-                      src={design.url?.startsWith('http') ? design.url : getPlaceholderImage(design)}
+                      src={design.url?.startsWith('http') || design.url?.startsWith('data:') ? design.url : getPlaceholderImage(design)}
                       alt={`Design`}
                       style={{
                         maxWidth: '100%',

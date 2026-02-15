@@ -8,13 +8,14 @@
  */
 
 import { Router } from 'express';
+import { GoogleGenAI } from '@google/genai';
 import db from '../lib/db.js';
 
 const router = Router();
 
 // Gemini API for chat (fallback to simple responses if not configured)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const genai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 // Personality prompts for different modes
 const PERSONALITY_PROMPTS = {
@@ -86,36 +87,22 @@ ${historyText}
 Now respond to the human's message. Be yourself!`;
 
   // If no API key, use simple fallback responses
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
+  if (!genai) {
     return generateFallbackResponse(clawd, userMessage);
   }
 
   try {
-    const response = await fetch(`${GEMINI_ENDPOINT}?key=${GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: systemPrompt },
-            { text: `Human: ${userMessage}\n${clawdName}:` }
-          ]
-        }],
-        generationConfig: {
-          temperature: 0.9,
-          maxOutputTokens: 150,
-          topP: 0.95
-        }
-      })
+    const response = await genai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `${systemPrompt}\n\nHuman: ${userMessage}\n${clawdName}:`,
+      config: {
+        temperature: 0.9,
+        maxOutputTokens: 150,
+        topP: 0.95
+      }
     });
 
-    if (!response.ok) {
-      console.error('Gemini API error:', response.status);
-      return generateFallbackResponse(clawd, userMessage);
-    }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (text) {
       return text.trim();
@@ -505,7 +492,7 @@ const STYLE_PALETTES = {
  * Use Gemini to analyze what design would suit this human based on Clawd's memory
  */
 async function analyzeHumanVibeForDesign(clawd, chatHistory, hint = null) {
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
+  if (!genai) {
     return {
       style: 'streetwear',
       vibe: 'bold and confident',
@@ -543,21 +530,13 @@ Respond in JSON only:
 }`;
 
   try {
-    const response = await fetch(`${GEMINI_ENDPOINT}?key=${GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.8, maxOutputTokens: 300 }
-      })
+    const response = await genai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { temperature: 0.8, maxOutputTokens: 300 }
     });
 
-    if (!response.ok) {
-      throw new Error('Gemini API error');
-    }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
 
     // Parse JSON from response
     const jsonMatch = text?.match(/\{[\s\S]*\}/);
