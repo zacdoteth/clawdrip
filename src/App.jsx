@@ -125,7 +125,6 @@ const SIZES = ["S", "M", "L", "XL", "2XL"];
 
 const WALLET_ADDRESS = "0xd9baf332b462a774ee8ec5ba8e54d43dfaab7093";
 const PAYMENT_AMOUNT = 35;
-const ADMIN_SECRET = "clawboss";
 const NOTIFICATION_EMAIL = ""; // Set your email for notifications
 
 const GIFT_MESSAGES = [
@@ -251,7 +250,6 @@ export default function ClawDrip() {
   const [walletCopied, setWalletCopied] = useState(false);
   const [skillLinkCopied, setSkillLinkCopied] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
-  const [adminInput, setAdminInput] = useState("");
   const [agentMsg, setAgentMsg] = useState("");
   const [agentOrderId, setAgentOrderId] = useState(null);
   const [shipping, setShipping] = useState({ name: "", addr1: "", addr2: "", city: "", state: "", zip: "", country: "US", email: "" });
@@ -409,22 +407,27 @@ export default function ClawDrip() {
     return { mins, secs: s, total: secs, isLow: secs < 60 };
   };
 
-  // Secret admin code listener (type "clawboss" anywhere)
+  // Admin access via URL hash: clawdrip.com/#admin?key=<secret>
   useEffect(() => {
-    const handleKeyPress = (e) => {
-      const newInput = (adminInput + e.key).slice(-ADMIN_SECRET.length);
-      setAdminInput(newInput);
-      if (newInput === ADMIN_SECRET) {
-        setAdminMode(true);
-        setView("admin");
-        setAdminInput("");
+    const checkAdminHash = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#admin?key=')) {
+        const key = hash.replace('#admin?key=', '');
+        // Validate against backend
+        fetch(`${API_BASE}/api/v1/admin/orders?limit=1`, {
+          headers: { 'Authorization': key }
+        }).then(res => {
+          if (res.ok) {
+            setAdminMode(true);
+            setView("admin");
+          }
+        }).catch(() => {});
+        // Clear hash to keep URL clean
+        window.history.replaceState(null, '', window.location.pathname);
       }
     };
-    if (!adminMode) {
-      window.addEventListener("keypress", handleKeyPress);
-      return () => window.removeEventListener("keypress", handleKeyPress);
-    }
-  }, [adminInput, adminMode]);
+    checkAdminHash();
+  }, []);
 
   const goHome = () => { setView("landing"); setAgentStep(0); setAgentOrderId(null); setBuyStep(0); setAdminMode(false); };
 
@@ -607,7 +610,6 @@ export default function ClawDrip() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          paymentHash: '0x' + generateId() + generateId() + generateId(), // Simulated hash
           agentName: 'Direct Purchase',
           giftMessage: null
         })
@@ -666,75 +668,12 @@ export default function ClawDrip() {
 
         setBuyStep(3);
       } else {
-        // Handle errors
         console.error('Payment confirmation failed:', data);
         setPaymentState('error');
-
-        // Fallback to localStorage-based order
-        const id = generateId();
-        const clawEarned = Math.floor(priceInfo.originalPrice);
-        const order = {
-          id,
-          product_id: 1,
-          product_name: PRODUCT.name,
-          size: selectedSize,
-          agent_name: "Direct Purchase",
-          status: "paid",
-          shipping,
-          price: priceInfo.price,
-          original_price: priceInfo.originalPrice,
-          discount_percent: priceInfo.discount,
-          discount_tier: priceInfo.discount > 0 ? tierInfo.tier : null,
-          chain: "base",
-          created_at: new Date().toISOString(),
-          claw_earned: clawEarned,
-        };
-        await saveOrder(order);
-
-        const newBalance = clawBalance + clawEarned;
-        await setClawBalance(newBalance);
-        setClawBalanceState(newBalance);
-        setTierInfo(calculateTier(newBalance));
-        setClaimOrder(order);
-
-        setPaymentState('success');
-        setShowConfetti(true);
-        setTimeout(() => setShowConfetti(false), 3000);
-        setBuyStep(3);
       }
     } catch (err) {
       console.error('Payment confirmation error:', err);
-      // Fallback to localStorage-based order on network error
-      const id = generateId();
-      const clawEarned = Math.floor(priceInfo.originalPrice);
-      const order = {
-        id,
-        product_id: 1,
-        product_name: PRODUCT.name,
-        size: selectedSize,
-        agent_name: "Direct Purchase",
-        status: "paid",
-        shipping,
-        price: priceInfo.price,
-        original_price: priceInfo.originalPrice,
-        discount_percent: priceInfo.discount,
-        discount_tier: priceInfo.discount > 0 ? tierInfo.tier : null,
-        chain: "base",
-        created_at: new Date().toISOString(),
-        claw_earned: clawEarned,
-      };
-      await saveOrder(order);
-
-      const newBalance = clawBalance + clawEarned;
-      await setClawBalance(newBalance);
-      setClawBalanceState(newBalance);
-      setTierInfo(calculateTier(newBalance));
-      setClaimOrder(order);
-
-      setPaymentState('success');
-      setShowConfetti(true);
-      setTimeout(() => setShowConfetti(false), 3000);
-      setBuyStep(3);
+      setPaymentState('error');
     } finally {
       // Clear reservation
       setReservation(null);
@@ -2076,8 +2015,14 @@ export default function ClawDrip() {
                 </div>
               )}
 
+              {paymentState === 'error' && (
+                <div style={{ background: C.red + "15", border: "1px solid " + C.red + "40", padding: "10px 14px", fontFamily: F.m, fontSize: 11, color: C.red, marginBottom: 8 }}>
+                  Payment could not be verified. Please make sure you sent exactly ${priceInfo?.price || 35} USDC to the wallet above, then try again.
+                </div>
+              )}
+
               <button onClick={confirmPayment} disabled={loading || paymentState === 'processing'} style={{ width: "100%", background: loading || paymentState === 'processing' ? C.s2 : C.lime, color: "#000", fontFamily: F.d, fontWeight: 700, fontSize: 13, padding: "15px", opacity: loading || paymentState === 'processing' ? 0.7 : 1 }}>
-                {loading || paymentState === 'processing' ? "VERIFYING..." : "I'VE SENT THE PAYMENT ✓"}
+                {loading || paymentState === 'processing' ? "VERIFYING..." : paymentState === 'error' ? "RETRY VERIFICATION" : "I'VE SENT THE PAYMENT ✓"}
               </button>
 
               <p style={{ fontFamily: F.m, fontSize: 9, color: C.mt, textAlign: "center", marginTop: 12, lineHeight: 1.6 }}>

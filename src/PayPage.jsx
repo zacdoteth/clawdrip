@@ -829,7 +829,7 @@ export default function PayPage() {
         {/* ── Trust Footer ── */}
         <TrustFooter items={[
           { icon: '🔒', text: 'Secured by Base Network' },
-          { icon: '★', text: '1,247 gifts delivered' },
+          { icon: '★', text: 'Limited drop: 10,000 units' },
           { icon: '🦞', text: 'First AI→human gift platform' },
         ]} />
       </Card>

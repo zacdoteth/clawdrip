@@ -19,7 +19,7 @@ const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
 const BASE_USDC_ADDRESS = (process.env.BASE_USDC_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913').toLowerCase();
 const TRANSFER_TOPIC = keccakId('Transfer(address,address,uint256)');
 
-const BLOCKED_COUNTRIES = new Set(['KP', 'RU', 'IR', 'CU', 'SY', 'BY']);
+const BLOCKED_COUNTRIES = new Set(['KP', 'RU', 'IR', 'CU', 'SY', 'BY', 'VE']);
 const BLOCKED_COUNTRY_ALIASES = new Map([
   ['north korea', 'KP'],
   ['russia', 'RU'],

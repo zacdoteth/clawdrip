@@ -1,11 +1,12 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useParams } from 'react-router-dom'
 import ClawDrip from './App.jsx'
 import Tank from './Tank.jsx'
 import DesignStudio from './DesignStudio.jsx'
 import PayPage from './PayPage.jsx'
 import TrackPage from './TrackPage.jsx'
+import ClaimPage from './ClaimPage.jsx'
 
 // Mock window.storage API with localStorage
 window.storage = {
@@ -33,6 +34,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/design" element={<DesignStudio />} />
         <Route path="/tank/:orderNumber" element={<TankWrapper />} />
         <Route path="/pay/:giftId" element={<PayPage />} />
+        <Route path="/claim/:orderNumber" element={<ClaimPage />} />
         <Route path="/track/:orderNumber" element={<TrackPage />} />
       </Routes>
     </BrowserRouter>
@@ -41,6 +43,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
 // Wrapper to extract orderNumber from URL params
 function TankWrapper() {
-  const orderNumber = window.location.pathname.split('/tank/')[1]
+  const { orderNumber } = useParams()
   return <Tank orderNumber={orderNumber} />
 }

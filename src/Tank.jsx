@@ -681,7 +681,7 @@ export default function Tank({ orderNumber: propOrderNumber }) {
 
   const handleClawdInteract = () => {
     // Clawd was clicked - could trigger special animation or sound
-    console.log('Clawd interacted!');
+    // Clawd interaction registered
   };
 
   const handleMessageSent = (data) => {
