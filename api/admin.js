@@ -10,6 +10,123 @@ import db from '../lib/db.js';
 
 const router = Router();
 
+// ============================================================================
+// NOTIFICATIONS (email + webhook on status changes)
+// ============================================================================
+
+/**
+ * Send status update email to customer via Resend
+ */
+async function sendStatusEmail(order, status, extras = {}) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || !order.shipping_email) return;
+
+  const fromEmail = process.env.FROM_EMAIL || 'orders@clawdrip.com';
+
+  const subjects = {
+    processing: `Your order is being printed: ${order.order_number}`,
+    shipped: `Your order has shipped! ${order.order_number}`,
+    in_transit: `Your order is on the way: ${order.order_number}`,
+    out_for_delivery: `Out for delivery today! ${order.order_number}`,
+    delivered: `Your order was delivered: ${order.order_number}`,
+  };
+
+  const subject = subjects[status];
+  if (!subject) return; // Only email on meaningful status changes
+
+  const trackingHtml = extras.trackingNumber
+    ? `<div style="background: #111; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+        <p style="margin: 0 0 4px; color: #a8a8a8; font-size: 12px;">TRACKING NUMBER</p>
+        <p style="margin: 0 0 12px; font-size: 18px; font-weight: 700; font-family: monospace;">${extras.trackingNumber}</p>
+        ${extras.carrier ? `<p style="margin: 0; color: #a8a8a8; font-size: 12px;">Carrier: ${extras.carrier.toUpperCase()}</p>` : ''}
+      </div>`
+    : '';
+
+  const statusEmoji = {
+    processing: '🖨️',
+    shipped: '📦',
+    in_transit: '🚚',
+    out_for_delivery: '🏠',
+    delivered: '✅',
+  };
+
+  const statusMessage = {
+    processing: 'Your shirt is being printed right now in Detroit.',
+    shipped: 'Your shirt just left the building! Track it below.',
+    in_transit: 'Your package is making its way to you.',
+    out_for_delivery: 'Your package is out for delivery today!',
+    delivered: 'Your package has been delivered. Enjoy your drip! 🦞',
+  };
+
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: `ClawDrip <${fromEmail}>`,
+        to: [order.shipping_email],
+        subject,
+        html: `
+          <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #030303; color: #f0ede6; padding: 40px 30px;">
+            <h1 style="font-size: 32px; margin: 0 0 8px;">
+              <span style="color: #ffffff;">CLAW</span><span style="color: #FF3B30;">DRIP</span>
+            </h1>
+            <p style="color: #C8FF00; font-size: 14px; margin: 0 0 30px;">${statusEmoji[status] || ''} ${status.replace(/_/g, ' ').toUpperCase()}</p>
+
+            <div style="background: #111; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+              <p style="margin: 0 0 4px; color: #a8a8a8; font-size: 12px;">ORDER NUMBER</p>
+              <p style="margin: 0 0 16px; font-size: 18px; font-weight: 700;">${order.order_number}</p>
+              <p style="margin: 0; font-size: 16px;">${statusMessage[status] || ''}</p>
+            </div>
+
+            ${trackingHtml}
+
+            <p style="margin: 0 0 8px; font-size: 14px;">
+              Track your order: <a href="https://clawdrip.com/track/${order.order_number}" style="color: #C8FF00;">clawdrip.com/track/${order.order_number}</a>
+            </p>
+
+            <hr style="border: none; border-top: 1px solid #222; margin: 30px 0;">
+            <p style="color: #555; font-size: 11px; margin: 0;">ClawDrip — AI→Human Commerce 🦞</p>
+          </div>
+        `,
+      }),
+    });
+  } catch (err) {
+    console.error('Status email failed:', err.message);
+  }
+}
+
+/**
+ * Fire webhook to agent on order status change
+ */
+async function fireOrderWebhook(order, status, extras = {}) {
+  if (!order.webhook_url) return;
+
+  try {
+    await fetch(order.webhook_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: `order.${status}`,
+        order: {
+          id: order.id,
+          orderNumber: order.order_number,
+          status,
+          trackingNumber: extras.trackingNumber || order.tracking_number || null,
+          carrier: extras.carrier || order.carrier || null,
+          estimatedDelivery: extras.estimatedDelivery || order.estimated_delivery || null,
+          trackingUrl: `https://clawdrip.com/track/${order.order_number}`,
+        },
+      }),
+    });
+  } catch (err) {
+    console.error('Order webhook failed:', err.message);
+  }
+}
+
 const ADMIN_SECRET = process.env.ADMIN_SECRET;
 
 if (process.env.NODE_ENV === 'production' && !ADMIN_SECRET) {
@@ -23,7 +140,7 @@ const adminAuth = (req, res, next) => {
     return next();
   }
 
-  const authHeader = req.headers['x-admin-secret'];
+  const authHeader = req.headers['x-admin-secret'] || req.headers['authorization'];
   const querySecret = req.query.secret;
 
   if (ADMIN_SECRET && (authHeader === ADMIN_SECRET || querySecret === ADMIN_SECRET)) {
@@ -231,6 +348,13 @@ router.patch('/orders/:id', adminAuth, async (req, res) => {
       } catch (eventErr) {
         console.error('Failed to create order event:', eventErr);
       }
+    }
+
+    // Fire notifications on meaningful status changes (non-blocking)
+    if (status && status !== order.status) {
+      const notifyExtras = { trackingNumber, carrier, estimatedDelivery };
+      sendStatusEmail(updated, status, notifyExtras).catch(() => {});
+      fireOrderWebhook(updated, status, notifyExtras).catch(() => {});
     }
 
     res.json({

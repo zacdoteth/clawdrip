@@ -236,6 +236,8 @@ async function ensureGiftStorage() {
     `);
     await db.query(`ALTER TABLE gifts ADD COLUMN IF NOT EXISTS wallet_private_key_encrypted TEXT;`);
     await db.query(`ALTER TABLE gifts ADD COLUMN IF NOT EXISTS sweep_tx_hash TEXT;`);
+    // Ensure orders table has webhook_url for agent notifications on status changes
+    await db.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS webhook_url TEXT;`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_gifts_status ON gifts(status);`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_gifts_expires_at ON gifts(expires_at);`);
     giftDbReady = true;
@@ -1042,6 +1044,18 @@ async function triggerAutoPurchase(gift) {
     await persistGift(gift);
 
     console.log(`Gift ${gift.id} purchased successfully: ${confirmResult.order.order_number}`);
+
+    // Persist webhook URL on the order so admin status changes can notify the agent
+    if (gift.webhookUrl) {
+      try {
+        await db.query(
+          `UPDATE orders SET webhook_url = $1 WHERE id = $2`,
+          [gift.webhookUrl, confirmResult.order.id]
+        );
+      } catch (whErr) {
+        console.error('Failed to save webhook_url on order:', whErr.message);
+      }
+    }
 
     // Send agent webhook if configured
     if (gift.webhookUrl) {
