@@ -26,9 +26,6 @@ async function sendStatusEmail(order, status, extras = {}) {
   const subjects = {
     processing: `Your order is being printed: ${order.order_number}`,
     shipped: `Your order has shipped! ${order.order_number}`,
-    in_transit: `Your order is on the way: ${order.order_number}`,
-    out_for_delivery: `Out for delivery today! ${order.order_number}`,
-    delivered: `Your order was delivered: ${order.order_number}`,
   };
 
   const subject = subjects[status];
@@ -45,17 +42,11 @@ async function sendStatusEmail(order, status, extras = {}) {
   const statusEmoji = {
     processing: '🖨️',
     shipped: '📦',
-    in_transit: '🚚',
-    out_for_delivery: '🏠',
-    delivered: '✅',
   };
 
   const statusMessage = {
     processing: 'Your shirt is being printed right now in Detroit.',
     shipped: 'Your shirt just left the building! Track it below.',
-    in_transit: 'Your package is making its way to you.',
-    out_for_delivery: 'Your package is out for delivery today!',
-    delivered: 'Your package has been delivered. Enjoy your drip! 🦞',
   };
 
   try {
