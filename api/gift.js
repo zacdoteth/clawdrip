@@ -219,7 +219,7 @@ function getBaseUrl(req) {
 }
 
 async function ensureGiftStorage() {
-  if (giftDbReady !== null) return giftDbReady;
+  if (giftDbReady === true) return true;
 
   try {
     await db.query(`
@@ -302,6 +302,7 @@ async function loadGift(giftId) {
     giftStore.set(giftId, gift);
     return gift;
   } catch (err) {
+    console.error('loadGift DB error:', err.message);
     return null;
   }
 }
