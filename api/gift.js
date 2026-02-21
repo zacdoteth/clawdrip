@@ -1129,7 +1129,7 @@ router.get('/stats', (req, res) => {
  * Diagnostic: tests gifts table read/write
  */
 router.get('/debug/db', async (req, res) => {
-  const results = { timestamp: new Date().toISOString(), tests: {} };
+  const results = { timestamp: new Date().toISOString(), version: 'v3-ssl-force', tests: {} };
 
   // Test 1: Can we connect to DB at all?
   try {
