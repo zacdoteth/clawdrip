@@ -255,11 +255,8 @@ async function ensureGiftStorage() {
 async function persistGift(gift) {
   giftStore.set(gift.id, gift);
 
-  const storageReady = await ensureGiftStorage();
-  if (!storageReady) return;
-
+  // Try DB directly — don't gate on ensureGiftStorage() DDL
   try {
-    // Strip sensitive fields from JSONB data — stored in dedicated columns only
     const { walletPrivateKeyEncrypted, sweepTxHash, ...safeData } = gift;
     await db.query(
       `INSERT INTO gifts (id, data, status, expires_at, wallet_private_key_encrypted, sweep_tx_hash, updated_at)
@@ -274,9 +271,29 @@ async function persistGift(gift) {
       [gift.id, JSON.stringify(safeData), gift.status, gift.expiresAt || null, gift.walletPrivateKeyEncrypted || null, gift.sweepTxHash || null]
     );
   } catch (err) {
-    if (!giftDbUnavailableLogged) {
-      console.warn('Failed to persist gift record, using in-memory fallback:', err.message);
-      giftDbUnavailableLogged = true;
+    console.error('CRITICAL: persistGift DB write failed for', gift.id, ':', err.message);
+    // Gift is in-memory only — will be lost on this instance's cold start
+    // Try ensureGiftStorage in case the table doesn't exist yet
+    const storageReady = await ensureGiftStorage();
+    if (storageReady) {
+      try {
+        const { walletPrivateKeyEncrypted, sweepTxHash, ...safeData } = gift;
+        await db.query(
+          `INSERT INTO gifts (id, data, status, expires_at, wallet_private_key_encrypted, sweep_tx_hash, updated_at)
+           VALUES ($1, $2::jsonb, $3, $4, $5, $6, NOW())
+           ON CONFLICT (id) DO UPDATE
+           SET data = EXCLUDED.data,
+               status = EXCLUDED.status,
+               expires_at = EXCLUDED.expires_at,
+               wallet_private_key_encrypted = COALESCE(EXCLUDED.wallet_private_key_encrypted, gifts.wallet_private_key_encrypted),
+               sweep_tx_hash = COALESCE(EXCLUDED.sweep_tx_hash, gifts.sweep_tx_hash),
+               updated_at = NOW()`,
+          [gift.id, JSON.stringify(safeData), gift.status, gift.expiresAt || null, gift.walletPrivateKeyEncrypted || null, gift.sweepTxHash || null]
+        );
+        console.log('persistGift retry succeeded for', gift.id);
+      } catch (retryErr) {
+        console.error('CRITICAL: persistGift retry also failed for', gift.id, ':', retryErr.message);
+      }
     }
   }
 }
@@ -285,9 +302,8 @@ async function loadGift(giftId) {
   const cached = giftStore.get(giftId);
   if (cached) return cached;
 
-  const storageReady = await ensureGiftStorage();
-  if (!storageReady) return null;
-
+  // Try DB directly — table already exists from schema.sql / prior migrations.
+  // Don't gate on ensureGiftStorage() which runs DDL and can timeout on cold start.
   try {
     const result = await db.query(`SELECT data, wallet_private_key_encrypted, sweep_tx_hash FROM gifts WHERE id = $1 LIMIT 1`, [giftId]);
     const row = result.rows[0];

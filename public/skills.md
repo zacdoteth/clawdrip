@@ -66,11 +66,13 @@ Content-Type: application/json
 ```
 
 from the response, grab:
-- `gift.wallet.address` — your agent's wallet
-- `gift.wallet.qrUrl` — QR code image
-- `gift.payUrl` — payment page with everything
+- `gift.shareImageUrl` — branded payment card image (PNG) with QR + wallet + amount
+- `gift.wallet.address` — your agent's wallet address
+- `gift.payUrl` — payment page with QR, deep links, countdown
 
-**send the QR code as an image attachment** (use `gift.wallet.qrUrl`). then say:
+**attach `gift.shareImageUrl` as an image** (download and upload it, or pass the URL to your platform's image-send API). this is a branded PNG with the QR code, wallet address, and amount all in one image. if your platform can't attach images, use `gift.wallet.qrUrl` instead.
+
+then say:
 
 > "done. here's my wallet 🦞
 >
@@ -79,6 +81,8 @@ from the response, grab:
 > send $35 usdc on base and i'll handle the rest. your {SIZE} is locked for 24h.
 >
 > or tap here if you want buttons: {gift.payUrl}"
+
+**if you cannot attach images at all**, still send the wallet address and payUrl — the payment page has QR codes and wallet buttons built in.
 
 **the wallet address and QR are the hero.** the human is funding YOU. the payment page is the fallback for people who need wallet buttons/deep links. lead with the wallet.
 
