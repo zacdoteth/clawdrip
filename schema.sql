@@ -119,8 +119,18 @@ CREATE TABLE orders (
   agent_name VARCHAR(255),
   gift_message TEXT,
 
+  -- Tracking & fulfillment
+  processing_at TIMESTAMPTZ,
+  delivered_at TIMESTAMPTZ,
+  carrier VARCHAR(100),
+  tracking_number VARCHAR(255),
+  estimated_delivery DATE,
+  label_url TEXT,
+  admin_notes TEXT,
+  webhook_url TEXT,
+
   CONSTRAINT valid_order_status CHECK (
-    status IN ('pending_claim', 'claimed', 'paid', 'shipped', 'delivered', 'cancelled')
+    status IN ('pending_claim', 'claimed', 'paid', 'processing', 'shipped', 'delivered', 'cancelled')
   )
 );
 
@@ -129,6 +139,45 @@ CREATE INDEX idx_orders_order_number ON orders(order_number);
 CREATE INDEX idx_orders_wallet ON orders(wallet_address) WHERE wallet_address IS NOT NULL;
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_created_at ON orders(created_at DESC);
+
+-- ============================================================================
+-- GIFTS TABLE: Agent-initiated gift flow
+-- ============================================================================
+-- Created when an agent calls POST /api/v1/gift/create.
+-- Stores wallet, payment status, and order linkage as JSONB.
+
+CREATE TABLE gifts (
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  status VARCHAR(50) NOT NULL,
+  expires_at TIMESTAMPTZ,
+  wallet_private_key_encrypted TEXT,
+  sweep_tx_hash TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_gifts_status ON gifts(status);
+CREATE INDEX idx_gifts_expires_at ON gifts(expires_at);
+
+-- ============================================================================
+-- ORDER EVENTS TABLE: Tracking timeline entries
+-- ============================================================================
+
+CREATE TABLE order_events (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  status VARCHAR(50) NOT NULL,
+  message TEXT,
+  carrier VARCHAR(100),
+  tracking_number VARCHAR(255),
+  location TEXT,
+  source VARCHAR(50) DEFAULT 'admin',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_order_events_order_id ON order_events(order_id);
+CREATE INDEX idx_order_events_created_at ON order_events(created_at DESC);
 
 -- ============================================================================
 -- CLAWDRIP_BALANCES TABLE: Wallet token balances for discounts
