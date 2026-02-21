@@ -1123,4 +1123,78 @@ router.get('/stats', (req, res) => {
   });
 });
 
+/**
+ * GET /api/v1/gift/debug/db
+ *
+ * Diagnostic: tests gifts table read/write
+ */
+router.get('/debug/db', async (req, res) => {
+  const results = { timestamp: new Date().toISOString(), tests: {} };
+
+  // Test 1: Can we connect to DB at all?
+  try {
+    const r = await db.query('SELECT 1 as ok');
+    results.tests.db_connect = { ok: true };
+  } catch (err) {
+    results.tests.db_connect = { ok: false, error: err.message };
+  }
+
+  // Test 2: Does gifts table exist?
+  try {
+    const r = await db.query("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'gifts') as exists");
+    results.tests.gifts_table_exists = { ok: r.rows[0]?.exists === true, value: r.rows[0]?.exists };
+  } catch (err) {
+    results.tests.gifts_table_exists = { ok: false, error: err.message };
+  }
+
+  // Test 3: Can we INSERT into gifts?
+  const testId = `test_${Date.now()}`;
+  try {
+    await db.query(
+      `INSERT INTO gifts (id, data, status, created_at) VALUES ($1, $2::jsonb, $3, NOW())`,
+      [testId, JSON.stringify({ test: true }), 'test']
+    );
+    results.tests.gifts_insert = { ok: true, id: testId };
+  } catch (err) {
+    results.tests.gifts_insert = { ok: false, error: err.message };
+  }
+
+  // Test 4: Can we SELECT from gifts?
+  try {
+    const r = await db.query(`SELECT id, status FROM gifts WHERE id = $1`, [testId]);
+    results.tests.gifts_select = { ok: r.rows.length > 0, rows: r.rows.length };
+  } catch (err) {
+    results.tests.gifts_select = { ok: false, error: err.message };
+  }
+
+  // Cleanup test row
+  try {
+    await db.query(`DELETE FROM gifts WHERE id = $1`, [testId]);
+  } catch (_) {}
+
+  // Test 5: How many gifts are in DB?
+  try {
+    const r = await db.query('SELECT count(*) as count FROM gifts');
+    results.tests.gifts_count = { ok: true, count: parseInt(r.rows[0]?.count || 0) };
+  } catch (err) {
+    results.tests.gifts_count = { ok: false, error: err.message };
+  }
+
+  // Test 6: ensureGiftStorage result
+  try {
+    const ready = await ensureGiftStorage();
+    results.tests.ensure_storage = { ok: ready };
+  } catch (err) {
+    results.tests.ensure_storage = { ok: false, error: err.message };
+  }
+
+  // Test 7: In-memory store size
+  results.tests.memory_store = { size: giftStore.size };
+
+  // Overall
+  results.all_ok = Object.values(results.tests).every(t => t.ok !== false);
+
+  res.json(results);
+});
+
 export default router;
