@@ -1462,7 +1462,7 @@ export default function ClawDrip() {
               <div className="wrap">
                 <div style={{ fontFamily: F.m, fontSize: 9, color: C.blue, letterSpacing: "0.18em", marginBottom: 8 }}>ORDER HISTORY</div>
                 <h2 style={{ fontFamily: F.d, fontWeight: 800, fontSize: "clamp(20px, 3.5vw, 28px)", letterSpacing: "-0.03em", marginBottom: 24 }}>
-                  Your <span style={{ color: C.blue }}>test orders</span>
+                  Your <span style={{ color: C.blue }}>orders</span>
                 </h2>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                   {orders.slice().reverse().map(order => (
